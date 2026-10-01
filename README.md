@@ -18,6 +18,7 @@ flowchart LR
 ## Design Decisions
 
 - **Two planned LLM steps:** LLM use is limited to fit scoring and grounded answers to custom application questions. Fetching, filtering, deduplication, safeguards, and persistence are deterministic code. The scorer and answer generator are added in later phases.
+- **LLM provider:** The fit scorer and grounded custom-question answerer will use the Anthropic API. The API key will be read from local `.env` configuration and must never be committed. Provider integration begins in Phase 2; Phase 1 makes no LLM calls.
 - **No LinkedIn scraping:** LinkedIn pages and Easy Apply are not automated. The planned LinkedIn integration reads alert emails and locates the employer's own posting.
 - **Platform tiers:** Greenhouse, Lever, Ashby, and SmartRecruiters are Tier 1; Workday is Tier 2; iCIMS, Taleo, SuccessFactors, and unrecognized forms are Tier 3/manual review. Phase 1 implements Greenhouse discovery only.
 - **Grounding:** Later LLM steps may use only the private profile and resume. Unknown or unsupported application questions must go to manual review rather than being guessed.
@@ -86,7 +87,7 @@ _To be filled in as the project is exercised: companies configured, jobs discove
 ## Roadmap
 
 1. Project setup, Greenhouse discovery, database, and location filtering.
-2. Structured fit scoring with validated output and mocked tests.
+2. Anthropic-backed structured fit scoring with validated output and mocked tests.
 3. Greenhouse form filling in dry-run mode, grounded answers, and screenshots.
 4. Other Tier 1 platforms, explicit live mode, and application safeguards.
 5. Career-page routing and LinkedIn alert email parsing.
