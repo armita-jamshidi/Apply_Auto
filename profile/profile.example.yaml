@@ -1,0 +1,34 @@
+# Fictional example only. Copy to profile.yaml and replace with your own details.
+personal:
+  name: Jordan Example
+  email: jordan.example@example.com
+  phone: "+1-555-010-2048"
+  location: Raleigh, NC
+  website: https://example.com
+  linkedin: https://www.linkedin.com/in/jordan-example
+
+work_authorization:
+  authorized_to_work_in_us: true
+  requires_sponsorship: false
+
+skills:
+  - Python
+  - FastAPI
+  - PostgreSQL
+  - Docker
+
+experience:
+  - company: Example Systems
+    title: Software Engineer
+    start_date: 2022-01
+    end_date: present
+    summary: Built internal data services and automated deployment workflows.
+    skills:
+      - Python
+      - PostgreSQL
+      - Docker
+
+education:
+  - institution: Example State University
+    degree: Bachelor of Science in Computer Science
+    graduation_date: 2021-05

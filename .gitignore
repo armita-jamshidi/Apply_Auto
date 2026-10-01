@@ -1,0 +1,36 @@
+# Personal profile and application data
+/profile/profile.yaml
+/profile/resume.pdf
+/profile/resume.*
+/.env
+/.env.*
+!/.env.example
+
+# Browser state and generated artifacts
+/screenshots/
+/.playwright/
+/playwright/.auth/
+/auth/
+
+# Local databases and runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
