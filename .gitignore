@@ -2,6 +2,7 @@
 /profile/profile.yaml
 /profile/resume.pdf
 /profile/resume.*
+/profile/*resume*.pdf
 /.env
 /.env.*
 !/.env.example

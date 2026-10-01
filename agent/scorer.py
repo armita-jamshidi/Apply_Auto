@@ -92,7 +92,7 @@ def score_job(
                 "input_schema": ACTION_SCHEMA,
             }
         ],
-        tool_choice={"type": "tool", "name": TOOL_NAME},
+        tool_choice={"type": "auto"},
     )
 
     tool_block = next(

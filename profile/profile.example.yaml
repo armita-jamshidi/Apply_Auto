@@ -6,6 +6,7 @@ personal:
   location: Raleigh, NC
   website: https://example.com
   linkedin: https://www.linkedin.com/in/jordan-example
+  github: https://github.com/jordan-example
 
 work_authorization:
   authorized_to_work_in_us: true
@@ -27,6 +28,15 @@ experience:
       - Python
       - PostgreSQL
       - Docker
+
+projects:
+  - name: Example Data Service
+    date: 2025-01
+    url: https://github.com/jordan-example/example-data-service
+    summary: Built a Python service for processing sample datasets.
+    skills:
+      - Python
+      - FastAPI
 
 education:
   - institution: Example State University

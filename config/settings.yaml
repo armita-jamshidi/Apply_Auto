@@ -1,6 +1,6 @@
 database_url: postgresql+psycopg://job_agent:job_agent@localhost:5432/job_agent
 fit_score_threshold: 70
-anthropic_model: claude-sonnet-4-20250514
+anthropic_model: claude-sonnet-5-5
 location:
   include_hybrid_nc: true
 network:

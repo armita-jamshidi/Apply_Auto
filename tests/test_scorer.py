@@ -45,7 +45,7 @@ def test_score_job_validates_structured_response_and_sends_only_inputs() -> None
     assert result.score == 86
     request = client.messages.create.call_args.kwargs
     assert request["model"] == "test-model"
-    assert request["tool_choice"] == {"type": "tool", "name": "submit_fit_assessment"}
+    assert request["tool_choice"] == {"type": "auto"}
     submitted = json.loads(request["messages"][0]["content"])
     assert submitted["candidate_profile"] == profile
     assert submitted["job_description"] == "Build Python services."
@@ -58,7 +58,8 @@ def test_score_job_uses_configured_threshold_and_model() -> None:
     result = score_job("Build Python services.", {}, client=client)
 
     assert result.recommended_action == "skip"
-    assert client.messages.create.call_args.kwargs["model"] == "claude-sonnet-4-20250514"
+    assert client.messages.create.call_args.kwargs["model"] == "claude-sonnet-5-5"
+    assert client.messages.create.call_args.kwargs["model"] == "claude-sonnet-5-5"
 
 
 def test_score_below_configured_threshold_cannot_recommend_apply() -> None:

@@ -23,7 +23,7 @@ class CompanyConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentSettings:
-    """Runtime settings used by Phase 1 discovery."""
+    """Runtime settings for job discovery and fit scoring."""
 
     database_url: str
     include_hybrid_nc: bool
@@ -51,6 +51,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     database_url = os.getenv("DATABASE_URL", raw.get("database_url", ""))
     fit_score_threshold = int(raw.get("fit_score_threshold", 70))
     anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-4-20250514"))
+    anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-5-5"))
     if not database_url:
         raise ValueError("Set database_url in settings.yaml or DATABASE_URL in the environment")
     if not 0 <= fit_score_threshold <= 100:
