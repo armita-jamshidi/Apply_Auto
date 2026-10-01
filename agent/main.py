@@ -30,7 +30,9 @@ def main() -> int:
     settings = load_settings(args.settings)
     companies = load_companies(args.companies)
     if not companies:
-        LOGGER.info("No companies configured; add Greenhouse board tokens to config/companies.yaml.")
+        LOGGER.info(
+            "No companies configured; add Greenhouse board tokens to config/companies.yaml."
+        )
         return 0
 
     engine = create_database_engine(settings.database_url)

@@ -29,6 +29,8 @@ class AgentSettings:
     include_hybrid_nc: bool
     max_retries: int
     backoff_seconds: float
+    fit_score_threshold: int
+    anthropic_model: str
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -47,13 +49,19 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     location = raw.get("location", {})
     network = raw.get("network", {})
     database_url = os.getenv("DATABASE_URL", raw.get("database_url", ""))
+    fit_score_threshold = int(raw.get("fit_score_threshold", 70))
+    anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-4-20250514"))
     if not database_url:
         raise ValueError("Set database_url in settings.yaml or DATABASE_URL in the environment")
+    if not 0 <= fit_score_threshold <= 100:
+        raise ValueError("fit_score_threshold must be between 0 and 100")
     return AgentSettings(
         database_url=database_url,
         include_hybrid_nc=bool(location.get("include_hybrid_nc", True)),
         max_retries=int(network.get("max_retries", 3)),
         backoff_seconds=float(network.get("backoff_seconds", 0.5)),
+        fit_score_threshold=fit_score_threshold,
+        anthropic_model=anthropic_model,
     )
 
 

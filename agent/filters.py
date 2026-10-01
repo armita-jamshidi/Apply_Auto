@@ -54,7 +54,9 @@ def _contains_nc(text: str) -> bool:
         return True
     if re.search(r"\brtp\b", text, flags=re.IGNORECASE):
         return True
-    return any(re.search(rf"\b{re.escape(city)}\b", text, flags=re.IGNORECASE) for city in _NC_CITIES)
+    return any(
+        re.search(rf"\b{re.escape(city)}\b", text, flags=re.IGNORECASE) for city in _NC_CITIES
+    )
 
 
 def _contains_other_remote_restriction(text: str) -> bool:
