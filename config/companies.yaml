@@ -1,0 +1,121 @@
+# companies.yaml
+# Board names are best guesses; run the verify script before relying on them.
+# platform: greenhouse | lever | ashby | career_page
+
+companies:
+  # AI labs and AI infrastructure
+  - name: Anthropic
+    platform: greenhouse
+    board: anthropic
+  - name: Databricks
+    platform: greenhouse
+    board: databricks
+  - name: Scale AI
+    platform: greenhouse
+    board: scaleai
+  - name: OpenAI
+    platform: ashby
+    board: openai
+  - name: Cohere
+    platform: ashby
+    board: cohere
+
+  # AI-native startups
+  - name: Harvey
+    platform: ashby
+    board: harvey
+  - name: Replit
+    platform: ashby
+    board: replit
+  - name: Linear
+    platform: ashby
+    board: linear
+  - name: Notion
+    platform: ashby
+    board: notion
+  - name: Ramp
+    platform: ashby
+    board: ramp
+  - name: Supabase
+    platform: ashby
+    board: supabase
+
+  # Health tech
+  - name: Flatiron Health
+    platform: greenhouse
+    board: flatironhealth
+  - name: Hinge Health
+    platform: greenhouse
+    board: hingehealth
+  - name: Oscar Health
+    platform: greenhouse
+    board: oscar
+  - name: Headway
+    platform: greenhouse
+    board: headway
+  - name: Oura
+    platform: greenhouse
+    board: oura
+
+  # Women's health
+  - name: Maven Clinic
+    platform: career_page
+    url: https://www.mavenclinic.com/careers
+  - name: Flo Health
+    platform: career_page
+    url: https://flo.health/careers
+
+  # Strong engineering cultures, remote-friendly
+  - name: Stripe
+    platform: greenhouse
+    board: stripe
+  - name: Figma
+    platform: greenhouse
+    board: figma
+  - name: Cloudflare
+    platform: greenhouse
+    board: cloudflare
+  - name: GitLab
+    platform: greenhouse
+    board: gitlab
+  - name: Duolingo
+    platform: greenhouse
+    board: duolingo
+  - name: Discord
+    platform: greenhouse
+    board: discord
+  - name: Palantir
+    platform: lever
+    board: palantir
+  - name: Plaid
+    platform: lever
+    board: plaid
+  - name: Spotify
+    platform: lever
+    board: spotify
+
+  # North Carolina (Research Triangle)
+  - name: Epic Games
+    platform: career_page
+    url: https://www.epicgames.com/site/en-US/careers
+  - name: Red Hat
+    platform: career_page
+    url: https://www.redhat.com/en/jobs
+  - name: SAS
+    platform: career_page
+    url: https://www.sas.com/en_us/careers.html
+  - name: Pendo
+    platform: career_page
+    url: https://www.pendo.io/careers/
+  - name: Bandwidth
+    platform: career_page
+    url: https://www.bandwidth.com/careers/
+  - name: IQVIA
+    platform: career_page
+    url: https://jobs.iqvia.com/
+  - name: Lenovo
+    platform: career_page
+    url: https://jobs.lenovo.com/
+  - name: Cisco
+    platform: career_page
+    url: https://jobs.cisco.com/
