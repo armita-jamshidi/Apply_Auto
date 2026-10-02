@@ -1,18 +1,23 @@
 # Job Agent
 
-A privacy-conscious job discovery and application assistant, built in reviewable phases. Phase 1 fetches public Greenhouse listings, filters for US-remote and North Carolina roles, and records new jobs in PostgreSQL. It does not score jobs or submit applications.
+A privacy-conscious job discovery and application assistant, built in reviewable phases.
+
+**Current status: Phases 1–4 are implemented.** The agent fetches public listings from Greenhouse, Lever, Ashby, and SmartRecruiters boards, keeps US-remote and North Carolina roles, and records them in PostgreSQL. It scores fit with Anthropic, fills application forms in a visible browser with grounded answers, and saves a screenshot. Dry run is the default. Submission happens only with an explicit `--live` flag and only when every safeguard passes.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    C[companies.yaml] --> G[Greenhouse public jobs API]
+    C[companies.yaml] --> G[Greenhouse / Lever / Ashby / SmartRecruiters APIs]
     G --> F[Location filter]
     F -->|Remote US or NC| D[(PostgreSQL jobs)]
+    F -->|Unclear location| Q[Queued for manual review]
     F -->|Other location| X[Discard]
-    D --> O[CLI results]
-    D -. later phase .-> S[Fit scoring]
-    S -. later phase .-> Q[Manual review or dry-run application]
+    D --> A[job-apply: form fill + screenshot]
+    A -->|default| R[Dry run]
+    A -->|--live| S[Fit scoring + safeguards]
+    S -->|all pass and confirmed| P[Submitted]
+    S -->|blocked, incomplete, or unconfirmed| M[Manual review]
 ```
 
 ## Design Decisions
@@ -20,10 +25,10 @@ flowchart LR
 - **Two LLM steps:** LLM use is limited to fit scoring and grounded answers to custom application questions. Fetching, filtering, deduplication, safeguards, and persistence are deterministic code. Phase 2 implements scoring; Phase 3 adds conservative factual answers and candidate-reviewed motivation drafts.
 - **LLM provider:** The fit scorer uses Anthropic's API with a required structured tool response validated by Pydantic. The API key is read from local `.env` configuration and must never be committed. Tests mock the SDK and do not make API calls.
 - **No LinkedIn scraping:** LinkedIn pages and Easy Apply are not automated. The planned LinkedIn integration reads alert emails and locates the employer's own posting.
-- **Platform tiers:** Greenhouse, Lever, Ashby, and SmartRecruiters are Tier 1; Workday is Tier 2; iCIMS, Taleo, SuccessFactors, and unrecognized forms are Tier 3/manual review. Phase 1 implements Greenhouse discovery only.
+- **Platform tiers:** Greenhouse, Lever, Ashby, and SmartRecruiters are Tier 1; Workday is Tier 2; iCIMS, Taleo, SuccessFactors, and unrecognized forms are Tier 3/manual review. All four Tier 1 platforms have fetchers and form fillers.
 - **Grounding:** Factual custom answers must be exact phrases present in the private profile or resume. Motivation drafts cite exact evidence from the profile, resume, or job description, remain blank in the form, and require candidate review. Unknown facts and qualification claims are not guessed.
 - **Explicit answer policy:** The configured candidate response is `No` for prior application/interview questions and `Yes` for AI application-policy understanding. Qualification questions require evidence or manual review; they are never automatically affirmed.
-- **Privacy and submission safety:** Personal profile data, resumes, screenshots, browser state, local databases, and `.env` are ignored by Git. `profile/profile.example.yaml` contains fictional data. Phase 3 has no submit action; the Greenhouse CLI fills and screenshots only.
+- **Privacy and submission safety:** Personal profile data, resumes, screenshots, browser state, local databases, and `.env` are ignored by Git. `profile/profile.example.yaml` contains fictional data. Forms are filled in dry-run mode by default; live submission requires `--live` and the safeguards described below.
 - **Duplicate prevention:** Job URLs have a database uniqueness constraint and are checked before insert. The CLI commits each accepted listing so one later failure does not discard earlier discoveries.
 - **Location scope:** Only `remote_us` and `nc` are retained. Remote roles must explicitly indicate US-wide eligibility; a bare `Remote` or a restricted state/region is not treated as US-wide. Hybrid NC inclusion is controlled by settings.
 - **Unclear locations:** Labels such as `Multiple locations` and `Flexible` are persisted with `queued` status for manual review. They are not treated as eligible for automatic application.
@@ -55,16 +60,19 @@ Requires Python 3.11+, Docker Compose, and Git. GitHub Actions runs Ruff and pyt
    python -m playwright install chromium
    ```
 
-4. Add companies to `config/companies.yaml`. Each entry needs a display name and Greenhouse board token:
+4. Add companies to `config/companies.yaml`. Each entry needs a display name, a platform, and the board token or company id from the public board URL:
 
-    ```yaml
-    companies:
-       - name: Example Company
-          platform: greenhouse
-          board: example-company
-    ```
+   ```yaml
+   companies:
+     - name: Example Company
+       platform: greenhouse
+       board: example-company
+     - name: Another Company
+       platform: lever
+       board: another-company
+   ```
 
-   Phase 4 supports Greenhouse, Lever, Ashby, and SmartRecruiters public boards. Career pages remain for a later phase.
+   Supported platforms are `greenhouse`, `lever`, `ashby`, and `smartrecruiters`. Career pages remain for a later phase.
 
 5. Run discovery:
 
@@ -81,21 +89,30 @@ pytest
 ruff check .
 ```
 
-The tests use SQLite in memory and mocked HTTP responses; they do not contact job boards.
+The tests use SQLite (in memory or in temporary files), mocked HTTP responses, and a fake browser page; they do not contact job boards or the Anthropic API.
 
-## Greenhouse Dry Run
+## Applying to a Job
 
-Use a direct HTTPS Tier 1 application URL. This opens a visible browser, fills supported fields from the private profile, uploads the PDF resume, and saves a full-page screenshot under the ignored `screenshots/` directory. Factual answers use exact source quotes. “Why?” and personal-fit responses are evidence-cited drafts; `--fill-reviewed-motivation-drafts` is an explicit opt-in to fill them. Qualification questions remain blank unless `personal.meets_job_requirements: true` is explicitly set in the private profile.
+`job-apply` works with Greenhouse, Lever, Ashby, and SmartRecruiters; pass the matching `--platform`. Use a direct HTTPS application URL on that platform's host. This opens a visible browser, fills supported fields from the private profile, uploads the PDF resume, and saves a full-page screenshot under the ignored `screenshots/` directory. Factual answers use exact source quotes. “Why?” and personal-fit responses are evidence-cited drafts; `--fill-reviewed-motivation-drafts` is an explicit opt-in to fill them. Qualification questions remain blank unless `personal.meets_job_requirements: true` is explicitly set in the private profile.
 
 ```powershell
 job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/jobs/123" --company "Example Company" --title "Software Engineer"
 ```
 
-Pass `--profile`, `--resume`, or `--screenshot` to override the local defaults. Missing evidence, unsupported controls, and answer-service errors leave the affected field blank and mark the result for manual review. The default local resume path is `profile/resume.pdf`; it is ignored by Git.
+In a dry run, company, title, and job description come from the database when the URL was discovered and the database is reachable; otherwise the description is read from the page. `--company` and `--title` override the stored values. Pass `--profile`, `--resume`, or `--screenshot` to override the local defaults. Missing evidence, unsupported controls, and answer-service errors leave the affected field blank and mark the result for manual review. The default local resume path is `profile/resume.pdf`; it is ignored by Git.
 
-Live submission is an explicit `--live` opt-in. Before opening the form, the CLI requires a discovered database job, calls the fit scorer, blocks scores below threshold or any dealbreakers, and checks duplicate submission, daily cap, and company monthly cap safeguards. Live attempts are recorded with answers, screenshot path, and submission timestamp. If any form field needs manual review, submission is blocked.
+Live submission is an explicit `--live` opt-in. Before opening the form, the CLI:
 
-Apply the latest migration before using Phase 4, because live-attempt caps track each attempt's start time:
+- requires the job to be in the database (run discovery first);
+- re-scores it and blocks scores below threshold or any dealbreakers;
+- blocks jobs whose status is `queued` or `manual_review`;
+- blocks a job that already has a live attempt, and enforces the daily cap and per-company monthly cap.
+
+Caps reset at midnight America/New_York time. Live attempts are recorded with answers, screenshot path, and submission timestamp. If any form field needs manual review, submission is blocked.
+
+After clicking submit, the applier waits for a confirmation message. On Lever, Ashby, and SmartRecruiters, a click error or a missing confirmation is recorded as `unknown`: the error is logged and stored on the application, and the job moves to `manual_review`. Check the employer site or your email before retrying.
+
+Apply the latest migration before using live mode, because live-attempt caps track each attempt's start time:
 
 ```powershell
 alembic upgrade head
@@ -109,7 +126,7 @@ job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/
 
 ## Configuration
 
-`config/settings.yaml` controls location behavior, HTTP retry backoff, the fit-score threshold, and the Anthropic model. Set `location.include_hybrid_nc` to `false` to exclude hybrid roles even when located in North Carolina. Put `ANTHROPIC_API_KEY` in the ignored local `.env`; never put a real key in `.env.example` or source control. The private `profile/profile.yaml` and `profile/resume.pdf` are intentionally absent; copy the fictional example only as a schema reference and keep real personal material local.
+`config/settings.yaml` controls location behavior, HTTP retry backoff, the fit-score threshold, the Anthropic model, and the live-application caps (`safeguards.daily_application_cap` and `safeguards.company_monthly_application_cap`, both counted in America/New_York time). Set `location.include_hybrid_nc` to `false` to exclude hybrid roles even when located in North Carolina. Put `ANTHROPIC_API_KEY` in the ignored local `.env`; never put a real key in `.env.example` or source control. The private `profile/profile.yaml` and `profile/resume.pdf` are intentionally absent; copy the fictional example only as a schema reference and keep real personal material local.
 
 ## Results
 
@@ -117,10 +134,10 @@ _To be filled in as the project is exercised: companies configured, jobs discove
 
 ## Roadmap
 
-1. Project setup, Greenhouse discovery, database, and location filtering.
-2. Anthropic-backed structured fit scoring with validated output and mocked tests. (Implemented and pushed.)
-3. Greenhouse form filling in dry-run mode, grounded answers, and screenshots. (Implemented locally; pending review.)
-4. Lever, Ashby, and SmartRecruiters fetchers/appliers, explicit live mode, and application safeguards. (Implemented locally; pending review.)
+1. Project setup, Greenhouse discovery, database, and location filtering. (Done.)
+2. Anthropic-backed structured fit scoring with validated output and mocked tests. (Done.)
+3. Greenhouse form filling in dry-run mode, grounded answers, and screenshots. (Done.)
+4. Lever, Ashby, and SmartRecruiters fetchers/appliers, explicit live mode, and application safeguards. (Done.)
 5. Career-page routing and LinkedIn alert email parsing.
 6. Grounded resume tailoring with claim traceability checks.
 7. Workday fetcher and applier.
