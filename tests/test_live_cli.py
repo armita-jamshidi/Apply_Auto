@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from agent.applier.cli import _persist_live_result
+from agent.applier.cli import _load_stored_job, _persist_live_result
 from agent.applier.greenhouse import ApplierResult
 from db.models import Application, Base, Job
 
@@ -71,3 +71,41 @@ def test_confirmed_live_outcome_marks_job_applied() -> None:
         application = session.get(Application, application_id)
         assert application.submitted_at is not None
         assert application.job.status == "applied"
+
+
+def test_dry_run_loads_stored_job_details(tmp_path, monkeypatch) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}"
+    engine = create_engine(database_url)
+    Base.metadata.create_all(engine)
+    with sessionmaker(engine)() as session:
+        session.add(
+            Job(
+                source="ashby",
+                platform="ashby",
+                company="Stored Co",
+                title="Data Engineer",
+                url=JOB_URL,
+                location_raw="Remote - US",
+                location_category="remote_us",
+                description="Stored description.",
+            )
+        )
+        session.commit()
+    engine.dispose()
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    job = _load_stored_job(JOB_URL)
+
+    assert job is not None
+    assert (job.company, job.title, job.description) == (
+        "Stored Co",
+        "Data Engineer",
+        "Stored description.",
+    )
+
+
+def test_dry_run_continues_when_database_is_unavailable(tmp_path, monkeypatch) -> None:
+    missing = tmp_path / "missing-dir" / "jobs.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{missing.as_posix()}")
+
+    assert _load_stored_job(JOB_URL) is None

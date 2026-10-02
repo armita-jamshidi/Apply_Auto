@@ -2,13 +2,15 @@
 
 import logging
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from agent.applier.base import run_tier1_dry_run
+from agent.answers import AnswerDecision
+from agent.applier.base import DESCRIPTION_SELECTORS, run_tier1_dry_run
 from agent.types import JobListing
 
 
@@ -52,6 +54,7 @@ class FakePage:
         self.visible_text: list[str] = []
         self.confirmation_text: str | None = "Application submitted!"
         self.click_error: Exception | None = None
+        self.sections: dict[str, str] = {}
 
     @property
     def first(self) -> "FakePage":
@@ -64,6 +67,11 @@ class FakePage:
         assert timeout > 0
 
     def locator(self, selector: str):
+        if selector in self.sections:
+            text = self.sections[selector]
+            return SimpleNamespace(count=lambda: 1, first=SimpleNamespace(inner_text=lambda: text))
+        if any(selector in selectors for selectors in DESCRIPTION_SELECTORS.values()):
+            return SimpleNamespace(count=lambda: 0)
         if selector == 'input[type="file"]':
             field = next((item for item in self.fields.values() if item.kind == "file"), None)
             return field or SimpleNamespace(count=lambda: 0)
@@ -401,3 +409,64 @@ def test_tier1_confirmation_text_present_before_submit_is_not_trusted(tmp_path: 
 
     assert page.submitted is True
     assert result.status == "unknown"
+
+
+def capture_job_context(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    contexts: list[dict[str, str]] = []
+
+    def fake_answer(question, profile, resume, *, client, job_context):
+        contexts.append(dict(job_context))
+        return AnswerDecision(answer=None, evidence=None, needs_manual_review=True)
+
+    monkeypatch.setattr("agent.applier.base.answer_custom_question", fake_answer)
+    return contexts
+
+
+@pytest.mark.parametrize(
+    ("platform", "url"),
+    [
+        ("lever", "https://jobs.lever.co/sample/job-1"),
+        ("ashby", "https://jobs.ashbyhq.com/sample/job-1"),
+        ("smartrecruiters", "https://jobs.smartrecruiters.com/Sample/1"),
+    ],
+)
+def test_tier1_reads_job_description_from_page_when_not_stored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    url: str,
+) -> None:
+    contexts = capture_job_context(monkeypatch)
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.fields["Why do you want to work here?"] = FakeField("Why do you want to work here?")
+    page.sections[DESCRIPTION_SELECTORS[platform][-1]] = f"Build {platform} data tools."
+    job = replace(create_job(platform, url), description="")
+
+    run_tier1_dry_run(
+        page, job, profile, resume, tmp_path / "filled.png", resume_text="Python engineer."
+    )
+
+    assert [context["description"] for context in contexts] == [f"Build {platform} data tools."]
+
+
+def test_tier1_prefers_stored_job_description_over_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contexts = capture_job_context(monkeypatch)
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.fields["Why do you want to work here?"] = FakeField("Why do you want to work here?")
+    page.sections['[data-qa="job-description"]'] = "Page text."
+
+    run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert contexts[0]["description"] == "Python role."

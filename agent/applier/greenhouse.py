@@ -103,17 +103,9 @@ def run_greenhouse_dry_run(
             page.wait_for_load_state("networkidle", timeout=15000)
         except PlaywrightTimeoutError:
             LOGGER.info("Greenhouse page stayed active; continuing after bounded readiness wait")
-        job_description = job.description
-        if not job_description:
-            for selector in (".job__description", "#content"):
-                try:
-                    description_locator = page.locator(selector)
-                    if description_locator.count():
-                        job_description = description_locator.first.inner_text().strip()
-                        if job_description:
-                            break
-                except Exception:
-                    LOGGER.debug("Could not read job description from selector %s", selector)
+        job_description = job.description or read_page_description(
+            page, (".job__description", "#content")
+        )
         personal = profile["personal"]
         assert isinstance(personal, dict)
         name = str(personal.get("name", "")).strip()
@@ -278,6 +270,20 @@ def run_greenhouse_dry_run(
         suggested_answers=suggested_answers,
         submitted=submit_live and not manual_review,
     )
+
+
+def read_page_description(page: Page, selectors: tuple[str, ...]) -> str:
+    """Return the first non-empty job description text found by the given selectors."""
+    for selector in selectors:
+        try:
+            description_locator = page.locator(selector)
+            if description_locator.count():
+                description = description_locator.first.inner_text().strip()
+                if description:
+                    return description
+        except Exception:
+            LOGGER.debug("Could not read job description from selector %s", selector)
+    return ""
 
 
 def _fill_label(page: Page, label: str, value: str | None, answers: dict[str, str | None]) -> bool:

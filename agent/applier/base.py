@@ -19,6 +19,7 @@ from agent.applier.greenhouse import (
     _select_combobox_option,
     extract_resume_text,
     load_profile,
+    read_page_description,
 )
 from agent.types import JobListing
 
@@ -44,6 +45,11 @@ PLATFORM_HOSTS = {
     "lever": ("jobs.lever.co", "jobs.eu.lever.co"),
     "ashby": ("jobs.ashbyhq.com",),
     "smartrecruiters": ("jobs.smartrecruiters.com",),
+}
+DESCRIPTION_SELECTORS = {
+    "lever": ('[data-qa="job-description"]', ".posting-page .content"),
+    "ashby": ('[class*="descriptionText"]', "#overview"),
+    "smartrecruiters": ('[itemprop="description"]', ".job-sections"),
 }
 CONFIRMATION_PATTERN = re.compile(
     r"application (?:was |has been )?(?:successfully )?(?:submitted|received)"
@@ -100,6 +106,9 @@ def run_tier1_dry_run(
             LOGGER.info(
                 "%s page stayed active; continuing after bounded readiness wait", job.platform
             )
+        job_description = job.description or read_page_description(
+            page, DESCRIPTION_SELECTORS[job.platform]
+        )
 
         personal = profile.get("personal", {})
         if not isinstance(personal, dict):
@@ -186,7 +195,7 @@ def run_tier1_dry_run(
                     job_context={
                         "company": job.company,
                         "title": job.title,
-                        "description": job.description,
+                        "description": job_description,
                     },
                 )
             except Exception:

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from agent.applier.ashby import run_ashby_application
@@ -80,6 +81,28 @@ def _validate_job_url(url: str, platform: str) -> None:
         hostname == host or hostname.endswith(f".{host}") for host in hosts
     ):
         raise SystemExit(f"--job-url must be an HTTPS {platform} URL")
+
+
+def _load_stored_job(job_url: str) -> Job | None:
+    """Return the discovered job for a dry run, or None when it is unavailable."""
+    try:
+        settings = load_settings()
+        engine = create_database_engine(settings.database_url)
+    except (ValueError, SQLAlchemyError, ImportError) as error:
+        LOGGER.info("Database unavailable for dry run; using page details only: %s", error)
+        return None
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            job = session.scalar(select(Job).where(Job.url == job_url))
+            if job is not None:
+                session.expunge(job)
+            return job
+    except SQLAlchemyError as error:
+        LOGGER.info("Database unavailable for dry run; using page details only: %s", error)
+        return None
+    finally:
+        engine.dispose()
 
 
 def _prepare_live_application(
@@ -199,15 +222,16 @@ def main() -> int:
         except Exception as error:
             raise SystemExit(f"Live application blocked: {error}") from error
     else:
-        company = args.company or "Unknown company"
-        title = args.title or "Unknown role"
-        description = ""
+        stored = _load_stored_job(args.job_url)
+        company = args.company or (stored.company if stored else "Unknown company")
+        title = args.title or (stored.title if stored else "Unknown role")
+        description = stored.description if stored else ""
 
     job = JobListing(
         source=args.platform,
         platform=args.platform,
-        company=company if args.live else args.company or company,
-        title=title if args.live else args.title or title,
+        company=company,
+        title=title,
         url=args.job_url,
         location_raw="",
         description=description,
