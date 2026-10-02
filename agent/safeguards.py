@@ -1,6 +1,7 @@
 """Fail-closed checks for explicitly live application attempts."""
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 from db.models import Application, Job
 
 REVIEW_STATUSES = frozenset({"queued", "manual_review"})
+# Caps reset at local midnight for the candidate, not at UTC midnight.
+CAP_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def live_application_block_reason(
@@ -50,26 +53,27 @@ def live_application_block_reason(
             "reconcile it before retrying."
         )
 
-    day_start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_now = current.astimezone(CAP_TIMEZONE)
+    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     day_count = session.scalar(
         select(func.count(Application.id)).where(
             Application.mode == "live",
-            Application.started_at >= day_start,
-            Application.started_at < day_start + timedelta(days=1),
+            Application.started_at >= _as_utc(day_start),
+            Application.started_at < _as_utc(day_start + timedelta(days=1)),
         )
     ) or 0
     if day_count >= daily_application_cap:
         return f"Daily live application cap reached ({daily_application_cap})."
 
-    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     next_month = _next_month(month_start)
     company_count = session.scalar(
         select(func.count(Application.id))
         .join(Job, Application.job_id == Job.id)
         .where(
             Application.mode == "live",
-            Application.started_at >= month_start,
-            Application.started_at < next_month,
+            Application.started_at >= _as_utc(month_start),
+            Application.started_at < _as_utc(next_month),
             func.lower(Job.company) == job.company.casefold(),
         )
     ) or 0
@@ -77,6 +81,11 @@ def live_application_block_reason(
         return f"Monthly live application cap reached for {job.company}."
 
     return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    # SQLite drops UTC offsets on storage, so compare against UTC like utc_now() writes.
+    return value.astimezone(UTC)
 
 
 def _next_month(month_start: datetime) -> datetime:

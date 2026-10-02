@@ -205,3 +205,84 @@ def test_live_guard_blocks_monthly_company_cap_case_insensitively() -> None:
 
         assert "Monthly live application cap" in (reason or "")
     engine.dispose()
+
+
+def count_block_with_previous_attempt(
+    previous_started_at: datetime,
+    now: datetime,
+    *,
+    daily_cap: int = 1,
+    company_cap: int = 5,
+    previous_company: str = "Other Co",
+) -> str | None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        job = create_job(session)
+        previous = Job(
+            source="greenhouse",
+            platform="greenhouse",
+            company=previous_company,
+            title="Engineer",
+            url="https://boards.greenhouse.io/other/previous",
+            location_raw="Remote - US",
+            location_category="remote_us",
+            description="",
+        )
+        session.add(previous)
+        session.flush()
+        session.add(
+            Application(
+                job_id=previous.id, mode="live", answers={}, started_at=previous_started_at
+            )
+        )
+        session.flush()
+        reason = live_application_block_reason(
+            session,
+            job,
+            fit_score_threshold=70,
+            daily_application_cap=daily_cap,
+            company_monthly_application_cap=company_cap,
+            now=now,
+        )
+    engine.dispose()
+    return reason
+
+
+def test_daily_cap_uses_new_york_day_not_utc_day() -> None:
+    # 14:00 UTC and 02:00 UTC next day are both October 1 in New York (EDT).
+    reason = count_block_with_previous_attempt(
+        datetime(2026, 10, 1, 14, tzinfo=UTC),
+        datetime(2026, 10, 2, 2, tzinfo=UTC),
+    )
+    assert "Daily live application cap" in (reason or "")
+
+
+def test_daily_cap_resets_at_new_york_midnight() -> None:
+    # 03:30 UTC is 23:30 EDT on October 1; 04:30 UTC is 00:30 EDT on October 2.
+    reason = count_block_with_previous_attempt(
+        datetime(2026, 10, 2, 3, 30, tzinfo=UTC),
+        datetime(2026, 10, 2, 4, 30, tzinfo=UTC),
+    )
+    assert reason is None
+
+
+def test_daily_cap_window_spans_dst_change() -> None:
+    # November 1, 2026 is 25 hours long in New York; 04:30 UTC on Nov 2 is still Nov 1 EST.
+    reason = count_block_with_previous_attempt(
+        datetime(2026, 11, 1, 4, 30, tzinfo=UTC),
+        datetime(2026, 11, 2, 4, 30, tzinfo=UTC),
+    )
+    assert "Daily live application cap" in (reason or "")
+
+
+def test_monthly_company_cap_uses_new_york_month() -> None:
+    # 02:00 UTC on November 1 is still October 31 in New York.
+    reason = count_block_with_previous_attempt(
+        datetime(2026, 10, 15, 12, tzinfo=UTC),
+        datetime(2026, 11, 1, 2, tzinfo=UTC),
+        daily_cap=5,
+        company_cap=1,
+        previous_company="Example Co",
+    )
+    assert "Monthly live application cap" in (reason or "")
