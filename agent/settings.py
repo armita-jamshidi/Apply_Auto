@@ -50,7 +50,6 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     network = raw.get("network", {})
     database_url = os.getenv("DATABASE_URL", raw.get("database_url", ""))
     fit_score_threshold = int(raw.get("fit_score_threshold", 70))
-    anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-4-20250514"))
     anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-5-5"))
     if not database_url:
         raise ValueError("Set database_url in settings.yaml or DATABASE_URL in the environment")
@@ -84,10 +83,16 @@ def load_companies(config_path: Path | None = None) -> list[CompanyConfig]:
         url = str(url_value).strip() if url_value is not None else None
         if not name:
             raise ValueError("Each company needs a non-empty name")
-        if platform not in {"greenhouse", "lever", "ashby", "career_page"}:
+        if platform not in {
+            "greenhouse",
+            "lever",
+            "ashby",
+            "smartrecruiters",
+            "career_page",
+        }:
             raise ValueError(f"Unsupported platform {platform!r} for {name}")
-        if platform == "greenhouse" and not board:
-            raise ValueError(f"Greenhouse company {name} needs a board value")
+        if platform in {"greenhouse", "lever", "ashby", "smartrecruiters"} and not board:
+            raise ValueError(f"{platform} company {name} needs a board/company id")
         if platform == "career_page" and not url:
             raise ValueError(f"Career page company {name} needs a url value")
         result.append(CompanyConfig(name=name, platform=platform, board=board, url=url))

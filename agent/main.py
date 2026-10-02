@@ -6,7 +6,10 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
+from agent.fetchers.ashby import fetch_ashby_jobs
 from agent.fetchers.greenhouse import fetch_greenhouse_jobs
+from agent.fetchers.lever import fetch_lever_jobs
+from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
 from agent.settings import load_companies, load_settings
 from db.models import Base
@@ -42,15 +45,21 @@ def main() -> int:
     try:
         with session_factory() as session:
             for company in companies:
-                if company.platform != "greenhouse":
+                fetcher = {
+                    "greenhouse": fetch_greenhouse_jobs,
+                    "lever": fetch_lever_jobs,
+                    "ashby": fetch_ashby_jobs,
+                    "smartrecruiters": fetch_smartrecruiters_jobs,
+                }.get(company.platform)
+                if fetcher is None:
                     LOGGER.info(
-                        "Skipping %s (%s); Phase 1 fetches Greenhouse boards only.",
+                        "Skipping %s (%s) until its fetcher is available.",
                         company.name,
                         company.platform,
                     )
                     continue
                 try:
-                    listings = fetch_greenhouse_jobs(
+                    listings = fetcher(
                         company.board or "",
                         company.name,
                         max_retries=settings.max_retries,
