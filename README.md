@@ -110,7 +110,7 @@ Live submission is an explicit `--live` opt-in. Before opening the form, the CLI
 
 Caps reset at midnight America/New_York time. Live attempts are recorded with answers, screenshot path, and submission timestamp. If any form field needs manual review, submission is blocked.
 
-After clicking submit, the applier waits for a confirmation message. On Lever, Ashby, and SmartRecruiters, a click error or a missing confirmation is recorded as `unknown`: the error is logged and stored on the application, and the job moves to `manual_review`. Check the employer site or your email before retrying.
+After clicking submit, the applier waits for a confirmation message. On every platform, a click error or a missing confirmation is recorded as `unknown`: the error is logged and stored on the application, and the job moves to `manual_review`. Check the employer site or your email before retrying.
 
 Apply the latest migration before using live mode, because live-attempt caps track each attempt's start time:
 

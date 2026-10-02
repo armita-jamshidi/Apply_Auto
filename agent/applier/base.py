@@ -5,11 +5,15 @@ import re
 from pathlib import Path
 
 from anthropic import Anthropic
-from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from agent.answers import answer_custom_question
+from agent.applier.confirmation import (
+    UNKNOWN_OUTCOME_ERROR,
+    confirmation_visible,
+    wait_for_confirmation,
+)
 from agent.applier.greenhouse import (
     ApplierResult,
     _answer_for_choice_question,
@@ -51,16 +55,6 @@ DESCRIPTION_SELECTORS = {
     "ashby": ('[class*="descriptionText"]', "#overview"),
     "smartrecruiters": ('[itemprop="description"]', ".job-sections"),
 }
-CONFIRMATION_PATTERN = re.compile(
-    r"application (?:was |has been )?(?:successfully )?(?:submitted|received)"
-    r"|thank(?:s| you) for (?:applying|your application|submitting)",
-    re.IGNORECASE,
-)
-CONFIRMATION_TIMEOUT_MS = 30000
-UNKNOWN_OUTCOME_ERROR = (
-    "Submit was clicked but no confirmation was detected; verify manually on the employer "
-    "site or by email before retrying."
-)
 
 
 def run_tier1_dry_run(
@@ -227,10 +221,10 @@ def run_tier1_dry_run(
             if button.count() != 1:
                 raise RuntimeError("Could not uniquely identify the application submit button")
             # Text already on the page cannot prove that this submission succeeded.
-            confirmation_preexisting = page.get_by_text(CONFIRMATION_PATTERN).count() > 0
+            confirmation_preexisting = confirmation_visible(page)
             submit_attempted = True
             button.click()
-            confirmed = not confirmation_preexisting and _wait_for_confirmation(page)
+            confirmed = not confirmation_preexisting and wait_for_confirmation(page)
     except Exception as error:
         if submit_attempted:
             LOGGER.exception(
@@ -269,16 +263,6 @@ def run_tier1_dry_run(
         suggested_answers=suggested,
         submitted=submit_live and not manual_review,
     )
-
-
-def _wait_for_confirmation(page: Page) -> bool:
-    try:
-        page.get_by_text(CONFIRMATION_PATTERN).first.wait_for(
-            state="visible", timeout=CONFIRMATION_TIMEOUT_MS
-        )
-    except PlaywrightError:
-        return False
-    return True
 
 
 def _find_form(page: Page) -> Locator:

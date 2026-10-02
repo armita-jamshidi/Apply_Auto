@@ -1,5 +1,7 @@
 """Mocked tests for the Greenhouse dry-run browser workflow."""
 
+import logging
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -557,3 +559,114 @@ def test_cli_defaults_to_renamed_resume() -> None:
     args = build_parser().parse_args(["--job-url", "https://boards.greenhouse.io/example/jobs/1"])
 
     assert args.resume.name == "resume.pdf"
+
+
+class LiveFakePage(FakePage):
+    """Greenhouse page with a submit button and post-submit confirmation text."""
+
+    def __init__(self, fields: list[FakeField]) -> None:
+        super().__init__(fields)
+        self.submitted = False
+        self.visible_text: list[str] = []
+        self.confirmation_text: str | None = "Application submitted"
+        self.click_error: Exception | None = None
+
+    def get_by_role(self, role: str, *, name: object, exact: bool = False):
+        if role == "button":
+            return SimpleNamespace(count=lambda: 1, click=self._submit)
+        return super().get_by_role(role, name=name, exact=exact)
+
+    def get_by_text(self, text: object, *, exact: bool = False) -> SimpleNamespace:
+        if isinstance(text, re.Pattern):
+            def matches() -> list[str]:
+                return [item for item in self.visible_text if text.search(item)]
+
+            def wait_for(**_kwargs) -> None:
+                if not matches():
+                    raise PlaywrightTimeoutError("Confirmation is not visible")
+
+            return SimpleNamespace(
+                count=lambda: len(matches()), first=SimpleNamespace(wait_for=wait_for)
+            )
+        return super().get_by_text(text, exact=exact)
+
+    def _submit(self) -> None:
+        self.submitted = True
+        if self.click_error is not None:
+            raise self.click_error
+        if self.confirmation_text:
+            self.visible_text.append(self.confirmation_text)
+
+
+def run_live(tmp_path: Path, page: LiveFakePage):
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    return run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+        submit_live=True,
+    )
+
+
+def complete_live_page() -> LiveFakePage:
+    return LiveFakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Email", field_type="email"),
+            FakeField("Resume/CV", field_type="file"),
+        ]
+    )
+
+
+def test_greenhouse_live_submit_is_applied_after_confirmation(tmp_path: Path) -> None:
+    page = complete_live_page()
+
+    result = run_live(tmp_path, page)
+
+    assert page.submitted is True
+    assert result.status == "applied"
+    assert result.submitted is True
+
+
+def test_greenhouse_live_submit_without_confirmation_is_unknown(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    page = complete_live_page()
+    page.confirmation_text = None
+
+    with caplog.at_level(logging.WARNING):
+        result = run_live(tmp_path, page)
+
+    assert page.submitted is True
+    assert result.status == "unknown"
+    assert result.submitted is False
+    assert "verify manually" in (result.error or "")
+    assert "verify manually" in caplog.text
+
+
+def test_greenhouse_live_submit_click_error_is_unknown(tmp_path: Path) -> None:
+    page = complete_live_page()
+    page.click_error = PlaywrightTimeoutError("Navigation interrupted")
+
+    result = run_live(tmp_path, page)
+
+    assert result.status == "unknown"
+    assert result.submitted is False
+    assert "Navigation interrupted" in (result.error or "")
+
+
+def test_greenhouse_confirmation_text_present_before_submit_is_not_trusted(
+    tmp_path: Path,
+) -> None:
+    page = complete_live_page()
+    page.visible_text.append("Thank you for your application to Example Co.")
+
+    result = run_live(tmp_path, page)
+
+    assert page.submitted is True
+    assert result.status == "unknown"

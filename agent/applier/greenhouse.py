@@ -14,6 +14,11 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pypdf import PdfReader
 
 from agent.answers import answer_custom_question
+from agent.applier.confirmation import (
+    UNKNOWN_OUTCOME_ERROR,
+    confirmation_visible,
+    wait_for_confirmation,
+)
 from agent.profile_schema import CandidateProfile
 from agent.types import JobListing
 
@@ -80,7 +85,7 @@ def run_greenhouse_dry_run(
     fill_reviewed_motivation_drafts: bool = False,
     submit_live: bool = False,
 ) -> ApplierResult:
-    """Fill supported Greenhouse fields, save a full-page screenshot, and never submit."""
+    """Fill Greenhouse fields and screenshot; submit only when live and the form is complete."""
     answers: dict[str, str | None] = {}
     suggested_answers: dict[str, str] = {}
     try:
@@ -96,7 +101,8 @@ def run_greenhouse_dry_run(
     manual_review = False
     screenshot_saved = False
     resume_uploaded = False
-    submitted = False
+    submit_attempted = False
+    confirmed = False
     try:
         page.goto(job.url, wait_until="domcontentloaded")
         try:
@@ -231,28 +237,44 @@ def run_greenhouse_dry_run(
             submit_button = page.get_by_role("button", name=re.compile(r"submit application", re.I))
             if submit_button.count() != 1:
                 raise RuntimeError("Could not uniquely identify the Greenhouse submit button")
+            # Text already on the page cannot prove that this submission succeeded.
+            confirmation_preexisting = confirmation_visible(page)
+            submit_attempted = True
             submit_button.click()
-            submitted = True
-            try:
-                page.get_by_text(re.compile(r"application (?:submitted|received)", re.I)).wait_for(
-                    state="visible",
-                    timeout=30000,
-                )
-            except PlaywrightTimeoutError:
-                LOGGER.warning(
-                    "Submit click completed but confirmation was not detected for %s", job.url
-                )
+            confirmed = not confirmation_preexisting and wait_for_confirmation(page)
     except Exception as error:
+        if submit_attempted:
+            LOGGER.exception("Greenhouse submit outcome unknown for %s; verify manually", job.url)
+            return ApplierResult(
+                status="unknown",
+                answers=answers,
+                screenshot_path=str(screenshot_path),
+                tailored_resume_path=None,
+                error=f"{UNKNOWN_OUTCOME_ERROR} {type(error).__name__}: {error}",
+                resume_uploaded=resume_uploaded,
+                suggested_answers=suggested_answers,
+            )
         LOGGER.exception("Greenhouse dry run failed for %s", job.url)
         return ApplierResult(
-            status="applied" if submitted else "failed",
+            status="failed",
             answers=answers,
             screenshot_path=str(screenshot_path) if screenshot_saved else None,
             tailored_resume_path=None,
             error=f"{type(error).__name__}: {error}",
             resume_uploaded=resume_uploaded,
             suggested_answers=suggested_answers,
-            submitted=submitted,
+        )
+
+    if submit_attempted and not confirmed:
+        LOGGER.warning("Greenhouse submit outcome unknown for %s; verify manually", job.url)
+        return ApplierResult(
+            status="unknown",
+            answers=answers,
+            screenshot_path=str(screenshot_path),
+            tailored_resume_path=None,
+            error=UNKNOWN_OUTCOME_ERROR,
+            resume_uploaded=resume_uploaded,
+            suggested_answers=suggested_answers,
         )
 
     return ApplierResult(
