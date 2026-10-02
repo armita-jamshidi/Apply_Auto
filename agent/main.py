@@ -1,4 +1,4 @@
-"""Command-line entry point for Phase 1 Greenhouse discovery."""
+"""Command-line entry point for Tier 1 ATS job discovery."""
 
 import argparse
 import logging
@@ -20,7 +20,9 @@ LOGGER = logging.getLogger("job_agent")
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the discovery command."""
-    parser = argparse.ArgumentParser(description="Fetch and filter configured Greenhouse jobs.")
+    parser = argparse.ArgumentParser(
+        description="Fetch and filter jobs from configured Tier 1 ATS boards."
+    )
     parser.add_argument("--companies", type=Path, help="Path to companies.yaml")
     parser.add_argument("--settings", type=Path, help="Path to settings.yaml")
     return parser
@@ -34,7 +36,7 @@ def main() -> int:
     companies = load_companies(args.companies)
     if not companies:
         LOGGER.info(
-            "No companies configured; add Greenhouse board tokens to config/companies.yaml."
+            "No companies configured; add ATS boards to config/companies.yaml."
         )
         return 0
 
@@ -66,7 +68,9 @@ def main() -> int:
                         backoff_seconds=settings.backoff_seconds,
                     )
                 except Exception:
-                    LOGGER.exception("Could not fetch Greenhouse board for %s", company.name)
+                    LOGGER.exception(
+                        "Could not fetch %s board for %s", company.platform, company.name
+                    )
                     continue
 
                 LOGGER.info("Fetched %d listings for %s", len(listings), company.name)

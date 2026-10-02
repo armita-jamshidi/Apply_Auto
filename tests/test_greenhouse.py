@@ -45,7 +45,7 @@ def test_fetch_greenhouse_jobs_retries_transient_server_error() -> None:
         return httpx.Response(200, json={"jobs": []})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    with patch("agent.fetchers.greenhouse.time.sleep"):
+    with patch("agent.fetchers.http.time.sleep"):
         jobs = fetch_greenhouse_jobs("example", "Example Co", client=client, max_retries=2)
     client.close()
 
