@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agent.settings import load_companies
+from agent.settings import load_companies, load_settings
 
 
 def test_companies_config_accepts_all_tier1_platforms(tmp_path: Path) -> None:
@@ -24,3 +24,21 @@ def test_companies_config_accepts_all_tier1_platforms(tmp_path: Path) -> None:
         "ashby",
         "smartrecruiters",
     ]
+
+
+def test_settings_load_live_application_caps(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text(
+        "database_url: 'sqlite+pysqlite:///:memory:'\n"
+        "fit_score_threshold: 75\n"
+        "safeguards:\n"
+        "  daily_application_cap: 3\n"
+        "  company_monthly_application_cap: 2\n",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(settings_path, load_env=False)
+
+    assert settings.fit_score_threshold == 75
+    assert settings.daily_application_cap == 3
+    assert settings.company_monthly_application_cap == 2

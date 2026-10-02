@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 job-agent = "agent.main:main"
+job-apply = "agent.applier.cli:main"
 
 [project.optional-dependencies]
 dev = [

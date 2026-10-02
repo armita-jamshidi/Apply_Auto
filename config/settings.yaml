@@ -6,3 +6,6 @@ location:
 network:
   max_retries: 3
   backoff_seconds: 0.5
+safeguards:
+  daily_application_cap: 5
+  company_monthly_application_cap: 5

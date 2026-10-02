@@ -31,6 +31,8 @@ class AgentSettings:
     backoff_seconds: float
     fit_score_threshold: int
     anthropic_model: str
+    daily_application_cap: int
+    company_monthly_application_cap: int
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -51,10 +53,15 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     database_url = os.getenv("DATABASE_URL", raw.get("database_url", ""))
     fit_score_threshold = int(raw.get("fit_score_threshold", 70))
     anthropic_model = str(raw.get("anthropic_model", "claude-sonnet-5-5"))
+    safeguards = raw.get("safeguards", {})
+    daily_application_cap = int(safeguards.get("daily_application_cap", 5))
+    company_monthly_application_cap = int(safeguards.get("company_monthly_application_cap", 5))
     if not database_url:
         raise ValueError("Set database_url in settings.yaml or DATABASE_URL in the environment")
     if not 0 <= fit_score_threshold <= 100:
         raise ValueError("fit_score_threshold must be between 0 and 100")
+    if daily_application_cap < 1 or company_monthly_application_cap < 1:
+        raise ValueError("application caps must be at least 1")
     return AgentSettings(
         database_url=database_url,
         include_hybrid_nc=bool(location.get("include_hybrid_nc", True)),
@@ -62,6 +69,8 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         backoff_seconds=float(network.get("backoff_seconds", 0.5)),
         fit_score_threshold=fit_score_threshold,
         anthropic_model=anthropic_model,
+        daily_application_cap=daily_application_cap,
+        company_monthly_application_cap=company_monthly_application_cap,
     )
 
 
