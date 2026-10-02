@@ -28,7 +28,7 @@ flowchart LR
 - **Platform tiers:** Greenhouse, Lever, Ashby, and SmartRecruiters are Tier 1; Workday is Tier 2; iCIMS, Taleo, SuccessFactors, and unrecognized forms are Tier 3/manual review. All four Tier 1 platforms have fetchers and form fillers.
 - **Grounding:** Factual custom answers must be exact phrases present in the private profile or resume. Motivation drafts cite exact evidence from the profile, resume, or job description, remain blank in the form, and require candidate review. Unknown facts and qualification claims are not guessed.
 - **Explicit answer policy:** The configured candidate response is `No` for prior application/interview questions and `Yes` for AI application-policy understanding. Qualification questions require evidence or manual review; they are never automatically affirmed.
-- **Privacy and submission safety:** Personal profile data, resumes, screenshots, browser state, local databases, and `.env` are ignored by Git. `profile/profile.example.yaml` contains fictional data. Forms are filled in dry-run mode by default; live submission requires `--live` and the safeguards described below.
+- **Privacy and submission safety:** Personal profile data, resumes, screenshots, review pages, browser state, local databases, and `.env` are ignored by Git. `profile/profile.example.yaml` contains fictional data. Forms are filled in dry-run mode by default; live submission requires `--live` and the safeguards described below.
 - **Duplicate prevention:** Job URLs have a database uniqueness constraint and are checked before insert. The CLI commits each accepted listing so one later failure does not discard earlier discoveries.
 - **Location scope:** Only `remote_us` and `nc` are retained. Remote roles must explicitly indicate US-wide eligibility; a bare `Remote` or a restricted state/region is not treated as US-wide. Hybrid NC inclusion is controlled by settings.
 - **Unclear locations:** Labels such as `Multiple locations` and `Flexible` are persisted with `queued` status for manual review. They are not treated as eligible for automatic application.
@@ -93,7 +93,7 @@ The tests use SQLite (in memory or in temporary files), mocked HTTP responses, a
 
 ## Applying to a Job
 
-`job-apply` works with Greenhouse, Lever, Ashby, and SmartRecruiters; pass the matching `--platform`. Use a direct HTTPS application URL on that platform's host. This opens a visible browser, fills supported fields from the private profile, uploads the PDF resume, and saves a full-page screenshot under the ignored `screenshots/` directory. Factual answers use exact source quotes. “Why?” and personal-fit responses are evidence-cited drafts; `--fill-reviewed-motivation-drafts` is an explicit opt-in to fill them. Qualification questions remain blank unless `personal.meets_job_requirements: true` is explicitly set in the private profile.
+`job-apply` works with Greenhouse, Lever, Ashby, and SmartRecruiters; pass the matching `--platform`. Use a direct HTTPS application URL on that platform's host. This runs a headless browser (pass `--headed` to watch it), fills supported fields from the private profile, uploads the PDF resume, and saves a full-page screenshot under the ignored `screenshots/` directory. Factual answers use exact source quotes. “Why?” and personal-fit responses are evidence-cited drafts; `--fill-reviewed-motivation-drafts` is an explicit opt-in to fill them. Qualification questions remain blank unless `personal.meets_job_requirements: true` is explicitly set in the private profile.
 
 ```powershell
 job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/jobs/123" --company "Example Company" --title "Software Engineer"
@@ -108,6 +108,14 @@ RESUME_PATH=profile/my_resume.pdf
 ```
 
 Relative paths are resolved from the project root. Without `RESUME_PATH`, the default is `profile/resume.pdf`; `--resume` overrides both. Resume PDFs under `profile/` are ignored by Git.
+
+After every dry run, an HTML review page is saved under the ignored `reviews/` directory (override with `--review`). Open it in a browser to check:
+
+- the job title, company, URL, outcome, and screenshot link;
+- the fit score, reasons, and dealbreakers: a stored score from the database when one exists, otherwise a fresh Anthropic score of the job description, or a note explaining why the job was not scored;
+- every field as **filled**, **draft, not filled**, **manual review**, or **skipped**, with the full filled value and a note saying why a field was left blank or skipped. Written answers and motivation drafts are shown in full.
+
+The CLI also prints the review path and a count of fields per status.
 
 Live submission is an explicit `--live` opt-in. Before opening the form, the CLI:
 

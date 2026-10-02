@@ -714,3 +714,36 @@ def test_greenhouse_confirmation_text_present_before_submit_is_not_trusted(
 
     assert page.submitted is True
     assert result.status == "unknown"
+
+
+def test_dry_run_records_why_fields_were_skipped_or_left_blank(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Email", field_type="email"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField("Years of Rust experience"),
+            FakeField("I agree to the terms", field_type="checkbox"),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        answers_client=mock_answer_client(None, None),
+        resume_text="Python developer.",
+    )
+
+    assert result.status == "manual_review"
+    assert result.job_description == "Build software."
+    assert result.field_notes["Phone"] == "Skipped: no matching field on this form."
+    assert result.field_notes["GitHub URL"] == "Skipped: no matching field on this form."
+    assert "do not provide a supported answer" in result.field_notes["Years of Rust experience"]
+    assert result.field_notes["I agree to the terms"] == (
+        "Unsupported control type (input/checkbox)."
+    )

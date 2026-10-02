@@ -87,6 +87,8 @@ def run_tier1_dry_run(
 
     answers: dict[str, str | None] = {}
     suggested: dict[str, str] = {}
+    notes: dict[str, str] = {}
+    job_description = job.description
     manual_review = False
     resume_uploaded = False
     screenshot_saved = False
@@ -113,15 +115,18 @@ def run_tier1_dry_run(
         first_filled = _fill_label(page, "First Name", first_name, answers)
         last_filled = _fill_label(page, "Last Name", last_name, answers)
         if not first_filled and not last_filled:
-            _fill_label(page, "Name", _as_text(personal.get("name")), answers)
+            if not _fill_label(page, "Name", _as_text(personal.get("name")), answers):
+                notes["Name"] = "No name field was found on this form."
         elif first_filled != last_filled:
             manual_review = True
+            notes["Name"] = "Only one of First Name / Last Name was found."
 
         github = _as_text(personal.get("github"))
         website = _as_text(personal.get("website"))
         if website and github and website.rstrip("/") == github.rstrip("/"):
             website = None
             answers["Website"] = None
+            notes["Website"] = "Profile website duplicates the GitHub URL; left blank."
             manual_review = True
         for label, value in (
             ("Email", _as_text(personal.get("email"))),
@@ -130,7 +135,8 @@ def run_tier1_dry_run(
             ("Website", website),
             ("GitHub URL", github),
         ):
-            _fill_label(page, label, value, answers)
+            if value and not _fill_label(page, label, value, answers):
+                notes[label] = "Skipped: no matching field on this form."
 
         file_inputs = page.locator('input[type="file"]')
         if file_inputs.count() == 1:
@@ -149,6 +155,11 @@ def run_tier1_dry_run(
                 )
         if not resume_uploaded:
             manual_review = True
+            notes["Resume"] = (
+                "Resume upload failed or could not be verified."
+                if file_inputs.count() == 1
+                else f"Expected one file input, found {file_inputs.count()}."
+            )
 
         form = _find_form(page)
         labels = form.locator("label")
@@ -156,18 +167,26 @@ def run_tier1_dry_run(
             label_text = " ".join(labels.nth(index).inner_text().split())
             normalized = _normalize_label(label_text)
             if not label_text or normalized in STANDARD_FIELDS or "resume" in normalized:
+                if normalized == "cover letter":
+                    notes[label_text] = "Skipped: cover letters are not automated."
                 continue
             accessible_label = re.sub(r"\s*\*\s*$", "", label_text).strip()
             locator = page.get_by_label(accessible_label, exact=False)
             if locator.count() != 1:
                 manual_review = True
                 answers[label_text] = None
+                notes[label_text] = f"Expected one matching control, found {locator.count()}."
                 continue
             if (locator.get_attribute("role") or "").casefold() == "combobox":
                 choice = _answer_for_choice_question(label_text, profile)
                 if choice is None or not _select_combobox_option(page, locator, choice):
                     manual_review = True
                     answers[label_text] = None
+                    notes[label_text] = (
+                        "No configured answer for this choice question."
+                        if choice is None
+                        else f"Configured answer {choice!r} could not be selected."
+                    )
                 else:
                     answers[label_text] = choice
                 continue
@@ -179,6 +198,7 @@ def run_tier1_dry_run(
             }:
                 manual_review = True
                 answers[label_text] = None
+                notes[label_text] = f"Unsupported control type ({tag}/{field_type})."
                 continue
             try:
                 decision = answer_custom_question(
@@ -192,14 +212,18 @@ def run_tier1_dry_run(
                         "description": job_description,
                     },
                 )
-            except Exception:
+            except Exception as error:
                 LOGGER.exception("Could not answer %s question %r", job.platform, label_text)
+                notes[label_text] = f"Answer service error: {type(error).__name__}."
                 decision = None
             if decision is None or decision.answer is None:
                 manual_review = True
                 answers[label_text] = None
+                if decision is not None:
+                    notes[label_text] = decision.reason or "No grounded answer was found."
                 continue
             if decision.needs_manual_review:
+                notes[label_text] = decision.reason or "Answer needs candidate review."
                 if decision.is_motivation_draft and fill_reviewed_motivation_drafts:
                     locator.fill(decision.answer)
                     answers[label_text] = decision.answer
@@ -233,12 +257,13 @@ def run_tier1_dry_run(
             return ApplierResult(
                 "unknown", answers, str(screenshot_path), None,
                 f"{UNKNOWN_OUTCOME_ERROR} {type(error).__name__}: {error}",
-                resume_uploaded, suggested,
+                resume_uploaded, suggested, field_notes=notes, job_description=job_description,
             )
         LOGGER.exception("%s applier failed for %s", job.platform, job.url)
         return ApplierResult(
             "failed", answers, str(screenshot_path) if screenshot_saved else None, None,
-            f"{type(error).__name__}: {error}", resume_uploaded, suggested
+            f"{type(error).__name__}: {error}", resume_uploaded, suggested,
+            field_notes=notes, job_description=job_description,
         )
 
     if submit_attempted and not confirmed:
@@ -247,7 +272,7 @@ def run_tier1_dry_run(
         )
         return ApplierResult(
             "unknown", answers, str(screenshot_path), None, UNKNOWN_OUTCOME_ERROR,
-            resume_uploaded, suggested,
+            resume_uploaded, suggested, field_notes=notes, job_description=job_description,
         )
     if submit_live and manual_review:
         LOGGER.warning("Not submitting %s because it still needs manual review", job.url)
@@ -262,6 +287,8 @@ def run_tier1_dry_run(
         resume_uploaded=resume_uploaded,
         suggested_answers=suggested,
         submitted=submit_live and not manual_review,
+        field_notes=notes,
+        job_description=job_description,
     )
 
 

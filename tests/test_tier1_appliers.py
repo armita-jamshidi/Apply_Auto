@@ -470,3 +470,36 @@ def test_tier1_prefers_stored_job_description_over_page(
     )
 
     assert contexts[0]["description"] == "Python role."
+
+
+def test_tier1_records_notes_for_blank_and_skipped_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture_job_context(monkeypatch)
+    profile, resume = create_profile(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume", kind="file"),
+            FakeField("Why do you want to work here?"),
+            FakeField("Required unsupported", kind="checkbox"),
+        ]
+    )
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("ashby", "https://jobs.ashbyhq.com/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.field_notes["Email"] == "Skipped: no matching field on this form."
+    assert result.field_notes["Why do you want to work here?"] == "No grounded answer was found."
+    assert result.field_notes["Required unsupported"] == (
+        "Unsupported control type (input/checkbox)."
+    )
+    assert result.job_description == "Python role."

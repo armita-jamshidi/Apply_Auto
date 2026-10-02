@@ -53,6 +53,8 @@ class ApplierResult:
     resume_uploaded: bool = False
     suggested_answers: dict[str, str] = field(default_factory=dict)
     submitted: bool = False
+    field_notes: dict[str, str] = field(default_factory=dict)
+    job_description: str = ""
 
 
 def load_profile(profile_path: Path) -> dict[str, object]:
@@ -88,6 +90,8 @@ def run_greenhouse_dry_run(
     """Fill Greenhouse fields and screenshot; submit only when live and the form is complete."""
     answers: dict[str, str | None] = {}
     suggested_answers: dict[str, str] = {}
+    notes: dict[str, str] = {}
+    job_description = job.description
     try:
         profile = load_profile(profile_path)
         extracted_resume = (
@@ -122,15 +126,18 @@ def run_greenhouse_dry_run(
         first_filled = _fill_label(page, "First Name", first_name, answers)
         last_filled = _fill_label(page, "Last Name", last_name, answers)
         if not first_filled and not last_filled:
-            _fill_label(page, "Name", name, answers)
+            if not _fill_label(page, "Name", name, answers):
+                notes["Name"] = "No name field was found on this form."
         elif first_filled != last_filled:
             manual_review = True
+            notes["Name"] = "Only one of First Name / Last Name was found."
 
         github_url = _as_text(personal.get("github"))
         website_url = _as_text(personal.get("website"))
         if website_url and github_url and website_url.rstrip("/") == github_url.rstrip("/"):
             website_url = None
             answers["Website"] = None
+            notes["Website"] = "Profile website duplicates the GitHub URL; left blank."
             manual_review = True
 
         for label, value in (
@@ -140,11 +147,13 @@ def run_greenhouse_dry_run(
             ("Website", website_url),
             ("GitHub URL", github_url),
         ):
-            _fill_label(page, label, value, answers)
+            if value and not _fill_label(page, label, value, answers):
+                notes[label] = "Skipped: no matching field on this form."
 
         resume_uploaded = _upload_resume(page, resume_path)
         if not resume_uploaded:
             manual_review = True
+            notes["Resume"] = "Resume upload failed or could not be verified."
             LOGGER.info("Resume upload failed or could not be verified for %s", job.url)
 
         labels = page.locator("#application-form label")
@@ -157,12 +166,15 @@ def run_greenhouse_dry_run(
                 or "resume" in normalized
                 or normalized == "cv"
             ):
+                if normalized == "cover letter":
+                    notes[label_text] = "Skipped: cover letters are not automated."
                 continue
             accessible_label = re.sub(r"\s*\*\s*$", "", label_text).strip()
             locator = page.get_by_label(accessible_label, exact=False)
             if locator.count() != 1:
                 manual_review = True
                 answers[label_text] = None
+                notes[label_text] = f"Expected one matching control, found {locator.count()}."
                 continue
 
             control_role = (locator.get_attribute("role") or "").casefold()
@@ -171,10 +183,12 @@ def run_greenhouse_dry_run(
                 if decision is None:
                     manual_review = True
                     answers[label_text] = None
+                    notes[label_text] = "No configured answer for this choice question."
                     continue
                 if not _select_combobox_option(page, locator, decision):
                     manual_review = True
                     answers[label_text] = None
+                    notes[label_text] = f"Configured answer {decision!r} could not be selected."
                     continue
                 answers[label_text] = decision
                 continue
@@ -190,6 +204,7 @@ def run_greenhouse_dry_run(
             }:
                 manual_review = True
                 answers[label_text] = None
+                notes[label_text] = f"Unsupported control type ({control_tag}/{control_type})."
                 continue
 
             try:
@@ -204,11 +219,14 @@ def run_greenhouse_dry_run(
                         "description": job_description,
                     },
                 )
-            except Exception:
+            except Exception as error:
                 LOGGER.exception("Could not answer custom Greenhouse question %r", label_text)
                 answers[label_text] = None
+                notes[label_text] = f"Answer service error: {type(error).__name__}."
                 manual_review = True
                 continue
+            if decision.reason and (decision.needs_manual_review or decision.answer is None):
+                notes[label_text] = decision.reason
             if decision.needs_manual_review or decision.answer is None:
                 if decision.answer is not None and decision.is_motivation_draft:
                     if fill_reviewed_motivation_drafts:
@@ -253,6 +271,8 @@ def run_greenhouse_dry_run(
                 error=f"{UNKNOWN_OUTCOME_ERROR} {type(error).__name__}: {error}",
                 resume_uploaded=resume_uploaded,
                 suggested_answers=suggested_answers,
+                field_notes=notes,
+                job_description=job_description,
             )
         LOGGER.exception("Greenhouse dry run failed for %s", job.url)
         return ApplierResult(
@@ -263,6 +283,8 @@ def run_greenhouse_dry_run(
             error=f"{type(error).__name__}: {error}",
             resume_uploaded=resume_uploaded,
             suggested_answers=suggested_answers,
+            field_notes=notes,
+            job_description=job_description,
         )
 
     if submit_attempted and not confirmed:
@@ -275,6 +297,8 @@ def run_greenhouse_dry_run(
             error=UNKNOWN_OUTCOME_ERROR,
             resume_uploaded=resume_uploaded,
             suggested_answers=suggested_answers,
+            field_notes=notes,
+            job_description=job_description,
         )
 
     return ApplierResult(
@@ -291,6 +315,8 @@ def run_greenhouse_dry_run(
         resume_uploaded=resume_uploaded,
         suggested_answers=suggested_answers,
         submitted=submit_live and not manual_review,
+        field_notes=notes,
+        job_description=job_description,
     )
 
 

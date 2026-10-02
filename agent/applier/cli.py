@@ -21,6 +21,7 @@ from agent.applier.greenhouse import (
     run_greenhouse_dry_run,
 )
 from agent.applier.lever import run_lever_application
+from agent.applier.review import FitSummary, count_statuses, write_review_page
 from agent.applier.smartrecruiters import run_smartrecruiters_application
 from agent.safeguards import live_application_block_reason
 from agent.scorer import score_job
@@ -68,6 +69,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume PDF; defaults to RESUME_PATH from .env, else profile/resume.pdf",
     )
     parser.add_argument("--screenshot", type=Path)
+    parser.add_argument(
+        "--review",
+        type=Path,
+        help="Dry-run HTML review page path; defaults to reviews/<platform>-<time>.html",
+    )
+    parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Show the browser window; the default is headless.",
+    )
     parser.add_argument("--company")
     parser.add_argument("--title")
     parser.add_argument(
@@ -116,6 +127,36 @@ def _load_stored_job(job_url: str) -> Job | None:
         return None
     finally:
         engine.dispose()
+
+
+def _dry_run_fit(stored: Job | None, description: str, profile_path: Path) -> FitSummary:
+    """Use a stored fit score when present; otherwise score the description if available."""
+    if stored is not None and stored.fit_score is not None:
+        return FitSummary(
+            score=stored.fit_score,
+            reasons=list(stored.fit_reasons or []),
+            dealbreakers=list(stored.dealbreakers or []),
+            note="Stored score from the database.",
+        )
+    if not description.strip():
+        return FitSummary(note="Not scored: no job description was available.")
+    try:
+        settings = load_settings()
+        assessment = score_job(
+            description,
+            load_profile(profile_path),
+            fit_score_threshold=settings.fit_score_threshold,
+            model=settings.anthropic_model,
+        )
+    except Exception as error:
+        LOGGER.warning("Could not score dry-run job: %s", error)
+        return FitSummary(note=f"Not scored: {type(error).__name__}: {error}")
+    return FitSummary(
+        score=assessment.score,
+        reasons=assessment.reasons,
+        dealbreakers=assessment.dealbreakers,
+        recommended_action=assessment.recommended_action,
+    )
 
 
 def _prepare_live_application(
@@ -214,11 +255,12 @@ def main() -> int:
     args = build_parser().parse_args()
     _validate_job_url(args.job_url, args.platform)
 
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     screenshot_path = args.screenshot or (
-        PROJECT_ROOT
-        / "screenshots"
-        / f"{args.platform}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.png"
+        PROJECT_ROOT / "screenshots" / f"{args.platform}-{stamp}.png"
     )
+    review_path = args.review or PROJECT_ROOT / "reviews" / f"{args.platform}-{stamp}.html"
+    stored: Job | None = None
     engine: Engine | None = None
     session_factory: sessionmaker[Session] | None = None
     application_id = None
@@ -252,7 +294,7 @@ def main() -> int:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=False)
+            browser = playwright.chromium.launch(headless=not args.headed)
             try:
                 page = browser.new_page()
                 kwargs = {
@@ -286,6 +328,18 @@ def main() -> int:
     finally:
         if engine is not None:
             engine.dispose()
+
+    if not args.live:
+        fit = _dry_run_fit(stored, result.job_description or description, args.profile)
+        rows = write_review_page(
+            review_path, job=job, result=result, fit=fit, resume_name=args.resume.name
+        )
+        counts = ", ".join(
+            f"{count} {status}" for status, count in count_statuses(rows).items() if count
+        )
+        print(f"Review page: {review_path}")
+        print(f"Fields: {counts}")
+        print(f"Fit score: {fit.score if fit.score is not None else fit.note}")
 
     print(f"Status: {result.status}")
     print(f"Mode: {'live' if args.live else 'dry_run'}")
