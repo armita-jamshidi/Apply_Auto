@@ -55,6 +55,9 @@ class Application(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
     answers: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     tailored_resume_path: Mapped[str | None] = mapped_column(String(2048))
     screenshot_path: Mapped[str | None] = mapped_column(String(2048))
