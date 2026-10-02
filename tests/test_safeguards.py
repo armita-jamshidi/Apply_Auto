@@ -99,6 +99,26 @@ def test_live_guard_blocks_out_of_scope_location() -> None:
     engine.dispose()
 
 
+@pytest.mark.parametrize("status", ["queued", "manual_review"])
+def test_live_guard_blocks_jobs_awaiting_manual_review(status: str) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        job = create_job(session)
+        job.location_category = "nc"
+        job.status = status
+        reason = live_application_block_reason(
+            session,
+            job,
+            fit_score_threshold=70,
+            daily_application_cap=5,
+            company_monthly_application_cap=5,
+            now=datetime(2026, 10, 1, tzinfo=UTC),
+        )
+        assert f"Job status is {status}" in (reason or "")
+    engine.dispose()
+
+
 def test_live_guard_blocks_duplicate_job_submission() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)

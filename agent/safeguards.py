@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from db.models import Application, Job
 
+REVIEW_STATUSES = frozenset({"queued", "manual_review"})
+
 
 def live_application_block_reason(
     session: Session,
@@ -27,6 +29,8 @@ def live_application_block_reason(
         return "Job location is outside the configured application scope."
     if job.status == "applied":
         return "Job is already marked applied."
+    if job.status in REVIEW_STATUSES:
+        return f"Job status is {job.status}; resolve the manual review before a live application."
     if job.fit_score is None:
         return "Job has not been fit-scored."
     if job.fit_score < fit_score_threshold:
