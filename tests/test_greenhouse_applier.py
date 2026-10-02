@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import ValidationError
 
+from agent.answers import AnswerDecision
 from agent.applier.greenhouse import load_profile, run_greenhouse_dry_run
 from agent.types import JobListing
 
@@ -18,11 +20,13 @@ class FakeField:
         tag: str = "input",
         field_type: str = "text",
         role: str | None = None,
+        options: list[str] | None = None,
     ) -> None:
         self.label = label
         self.tag = tag
         self.field_type = field_type
         self.role = role
+        self.options = options or []
         self.value: str | None = None
         self.uploaded_file: str | None = None
 
@@ -37,13 +41,34 @@ class FakeField:
         self.value = value
 
     def get_attribute(self, name: str) -> str | None:
-        return self.field_type if name == "type" else None
+        if name == "type":
+            return self.field_type
+        if name == "role":
+            return self.role
+        return None
 
     def evaluate(self, _expression: str) -> str:
+        if "input.files" in _expression:
+            return bool(self.uploaded_file)
+        if "checkValidity" in _expression:
+            return True
         return self.tag
 
     def set_input_files(self, path: str) -> None:
         self.uploaded_file = path
+
+    def locator(self, selector: str) -> SimpleNamespace:
+        assert selector == "option"
+        return SimpleNamespace(all_text_contents=lambda: self.options)
+
+    def select_option(self, *, label: str) -> None:
+        self.value = label
+
+    def click(self) -> None:
+        return None
+
+    def input_value(self) -> str:
+        return self.value or ""
 
 
 class FakeLabel:
@@ -75,9 +100,15 @@ class FakePage:
         assert wait_until == "domcontentloaded"
         self.navigated_to = url
 
+    def wait_for_load_state(self, state: str, *, timeout: int) -> None:
+        assert state == "networkidle"
+        assert timeout > 0
+
     def locator(self, selector: str) -> FakeLabels | FakeField | SimpleNamespace:
         if selector == "#application-form label":
             return FakeLabels(list(self.fields))
+        if selector == "#application-form":
+            return SimpleNamespace(evaluate=lambda _expression: True)
         if selector == "#resume":
             resume_field = next(
                 (field for field in self.fields.values() if field.field_type == "file"),
@@ -96,14 +127,39 @@ class FakePage:
             )
         return field if field is not None else SimpleNamespace(count=lambda: 0)
 
-    def get_by_role(self, role: str, *, name: str, exact: bool) -> SimpleNamespace:
+    def get_by_role(self, role: str, *, name: str, exact: bool) -> FakeField | SimpleNamespace:
+        if role == "option":
+            matches = [
+                field
+                for field in self.fields.values()
+                if field.role == "combobox" and name in field.options
+            ]
+            if not matches:
+                return SimpleNamespace(count=lambda: 0)
+            field = matches[0]
+            return SimpleNamespace(count=lambda: 1, click=lambda: setattr(field, "value", name))
         matches = [
             field
             for field in self.fields.values()
             if field.role == role
             and (field.label == name if exact else name.casefold() in field.label.casefold())
         ]
-        return SimpleNamespace(count=lambda: len(matches))
+        return matches[0] if matches else SimpleNamespace(count=lambda: 0)
+
+    def get_by_text(self, text: str, *, exact: bool) -> SimpleNamespace:
+        assert exact
+        attached = any(
+            field.uploaded_file and Path(field.uploaded_file).name == text
+            for field in self.fields.values()
+        )
+
+        def wait_for(*, state: str, timeout: int) -> None:
+            assert state == "visible"
+            assert timeout > 0
+            if not attached:
+                raise PlaywrightTimeoutError("Attachment filename did not appear")
+
+        return SimpleNamespace(wait_for=wait_for)
 
     def screenshot(self, *, path: str, full_page: bool) -> None:
         self.screenshots.append((path, full_page))
@@ -190,6 +246,7 @@ def test_dry_run_fills_standard_fields_uploads_and_screenshots(tmp_path: Path) -
     assert page.fields["LinkedIn"].value == "https://example.com/alex"
     assert page.fields["GitHub URL"].value == "https://github.com/alex"
     assert page.fields["Resume/CV"].uploaded_file == str(resume_path)
+    assert result.resume_uploaded is True
     assert page.fields["What programming language do you use?"].value == "Python"
     assert result.answers["What programming language do you use?"] == "Python"
     assert result.screenshot_path == str(screenshot_path)
@@ -235,7 +292,7 @@ def test_combobox_is_left_blank_and_routed_to_manual_review(tmp_path: Path) -> N
             FakeField("First Name"),
             FakeField("Last Name"),
             FakeField("Resume/CV", field_type="file"),
-            FakeField("Country", tag="input", role="combobox"),
+            FakeField("Country", tag="input", role="combobox", options=["Canada", "Other"]),
         ]
     )
     answer_client = mock_answer_client("United States", "United States")
@@ -254,6 +311,173 @@ def test_combobox_is_left_blank_and_routed_to_manual_review(tmp_path: Path) -> N
     assert page.fields["Country"].value is None
     assert result.answers["Country"] is None
     answer_client.messages.create.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("question", "options", "expected"),
+    [
+        ("Have you interviewed at Anthropic before?", ["Select...", "Yes", "No"], "No"),
+        ("AI Policy for Application", ["Select...", "Yes", "No"], "Yes"),
+    ],
+)
+def test_explicit_policy_selects_supported_choice(
+    tmp_path: Path,
+    question: str,
+    options: list[str],
+    expected: str,
+) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField(question, role="combobox", options=options),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+    )
+
+    assert page.fields[question].value == expected
+    assert result.answers[question] == expected
+
+
+def test_qualification_choice_stays_blank_without_explicit_profile_fact(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    question = "Do you meet the qualifications for this role?"
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField(question, role="combobox", options=["Select...", "Yes", "No"]),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+    )
+
+    assert page.fields[question].value is None
+    assert result.answers[question] is None
+    assert result.status == "manual_review"
+
+
+def test_website_is_left_blank_when_it_duplicates_github(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    profile_text = profile_path.read_text(encoding="utf-8").replace(
+        "https://alex.example.com", "https://github.com/alex"
+    )
+    profile_path.write_text(profile_text, encoding="utf-8")
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Website", field_type="url"),
+            FakeField("GitHub URL", field_type="url"),
+            FakeField("Resume/CV", field_type="file"),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+    )
+
+    assert page.fields["Website"].value is None
+    assert page.fields["GitHub URL"].value == "https://github.com/alex"
+    assert result.answers["Website"] is None
+    assert result.status == "manual_review"
+
+
+def test_resume_upload_is_not_reported_when_browser_has_no_file(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+        ]
+    )
+    page.fields["Resume/CV"].set_input_files = lambda _path: None
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+    )
+
+    assert result.resume_uploaded is False
+    assert result.status == "manual_review"
+
+
+@pytest.mark.parametrize("fill_draft", [False, True])
+def test_motivation_answer_requires_explicit_opt_in_to_fill(
+    tmp_path: Path,
+    fill_draft: bool,
+) -> None:
+    from unittest.mock import patch
+
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    question = "Why do you want to participate in this program?"
+    draft = "I built a Python service for literature analysis."
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField(question, tag="textarea"),
+        ]
+    )
+
+    with patch(
+        "agent.applier.greenhouse.answer_custom_question",
+        return_value=AnswerDecision(
+            answer=draft,
+            evidence="[profile] Built a Python service for literature analysis.",
+            needs_manual_review=True,
+            reason="Candidate review is required.",
+            is_motivation_draft=True,
+        ),
+    ):
+        result = run_greenhouse_dry_run(
+            page,
+            make_job(),
+            profile_path,
+            resume_path,
+            tmp_path / "filled.png",
+            resume_text="Python developer.",
+            fill_reviewed_motivation_drafts=fill_draft,
+        )
+
+    assert result.status == ("dry_run_ready" if fill_draft else "manual_review")
+    if fill_draft:
+        assert page.fields[question].value == draft
+        assert result.answers[question] == draft
+        assert question not in result.suggested_answers
+    else:
+        assert page.fields[question].value is None
+        assert result.answers[question] is None
+        assert result.suggested_answers[question] == draft
 
 
 def test_missing_resume_upload_control_routes_to_manual_review(tmp_path: Path) -> None:
@@ -325,3 +549,11 @@ def test_profile_loader_rejects_project_without_name(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_profile(profile_path)
+
+
+def test_cli_defaults_to_renamed_resume() -> None:
+    from agent.applier.cli import build_parser
+
+    args = build_parser().parse_args(["--job-url", "https://boards.greenhouse.io/example/jobs/1"])
+
+    assert args.resume.name == "resume.pdf"

@@ -22,7 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--job-url", required=True, help="HTTPS URL of the Greenhouse job form")
     parser.add_argument("--profile", type=Path, default=PROJECT_ROOT / "profile" / "profile.yaml")
-    parser.add_argument("--resume", type=Path, default=PROJECT_ROOT / "profile" / "resume.pdf")
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=PROJECT_ROOT / "profile" / "resume.pdf",
+    )
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--company", default="Unknown company")
     parser.add_argument("--title", default="Unknown role")
