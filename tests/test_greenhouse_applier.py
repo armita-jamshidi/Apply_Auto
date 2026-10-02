@@ -553,12 +553,56 @@ def test_profile_loader_rejects_project_without_name(tmp_path: Path) -> None:
         load_profile(profile_path)
 
 
-def test_cli_defaults_to_renamed_resume() -> None:
-    from agent.applier.cli import build_parser
+def test_cli_resume_defaults_to_generic_path_without_resume_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.applier import cli
 
-    args = build_parser().parse_args(["--job-url", "https://boards.greenhouse.io/example/jobs/1"])
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.delenv("RESUME_PATH", raising=False)
 
-    assert args.resume.name == "resume.pdf"
+    args = cli.build_parser().parse_args(
+        ["--job-url", "https://boards.greenhouse.io/example/jobs/1"]
+    )
+
+    assert args.resume == cli.PROJECT_ROOT / "profile" / "resume.pdf"
+
+
+def test_cli_resume_path_from_env_is_relative_to_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.applier import cli
+
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("RESUME_PATH", "profile/sample_resume.pdf")
+
+    assert cli.default_resume_path() == cli.PROJECT_ROOT / "profile" / "sample_resume.pdf"
+
+
+def test_cli_absolute_resume_path_from_env_is_used_as_is(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.applier import cli
+
+    resume = tmp_path / "elsewhere" / "resume.pdf"
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("RESUME_PATH", str(resume))
+
+    assert cli.default_resume_path() == resume
+
+
+def test_cli_resume_flag_overrides_resume_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.applier import cli
+
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("RESUME_PATH", "profile/sample_resume.pdf")
+
+    args = cli.build_parser().parse_args(
+        ["--job-url", "https://boards.greenhouse.io/example/jobs/1", "--resume", "other.pdf"]
+    )
+
+    assert args.resume == Path("other.pdf")
 
 
 class LiveFakePage(FakePage):

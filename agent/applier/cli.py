@@ -2,10 +2,12 @@
 
 import argparse
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -41,6 +43,16 @@ APPLIERS = {
 }
 
 
+def default_resume_path() -> Path:
+    """Return RESUME_PATH from the environment or local .env, else profile/resume.pdf."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    configured = os.getenv("RESUME_PATH", "").strip()
+    if not configured:
+        return PROJECT_ROOT / "profile" / "resume.pdf"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build arguments for default dry-run or explicitly guarded live application."""
     parser = argparse.ArgumentParser(
@@ -52,7 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--resume",
         type=Path,
-        default=PROJECT_ROOT / "profile" / "resume.pdf",
+        default=default_resume_path(),
+        help="Resume PDF; defaults to RESUME_PATH from .env, else profile/resume.pdf",
     )
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--company")
