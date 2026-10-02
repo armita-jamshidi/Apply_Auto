@@ -160,6 +160,13 @@ def _persist_live_result(
         if result.submitted:
             application.submitted_at = utc_now()
             job.status = "applied"
+        elif result.status == "unknown":
+            job.status = "manual_review"
+            LOGGER.warning(
+                "Live submission outcome unknown for %s; check it manually (application %d).",
+                job_url,
+                application_id,
+            )
         elif application.error is None:
             application.error = f"Not submitted; applier status: {result.status}"
         session.commit()

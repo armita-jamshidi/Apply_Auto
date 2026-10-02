@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from anthropic import Anthropic
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -44,6 +45,16 @@ PLATFORM_HOSTS = {
     "ashby": ("jobs.ashbyhq.com",),
     "smartrecruiters": ("jobs.smartrecruiters.com",),
 }
+CONFIRMATION_PATTERN = re.compile(
+    r"application (?:was |has been )?(?:successfully )?(?:submitted|received)"
+    r"|thank(?:s| you) for (?:applying|your application|submitting)",
+    re.IGNORECASE,
+)
+CONFIRMATION_TIMEOUT_MS = 30000
+UNKNOWN_OUTCOME_ERROR = (
+    "Submit was clicked but no confirmation was detected; verify manually on the employer "
+    "site or by email before retrying."
+)
 
 
 def run_tier1_dry_run(
@@ -79,6 +90,8 @@ def run_tier1_dry_run(
     manual_review = False
     resume_uploaded = False
     screenshot_saved = False
+    submit_attempted = False
+    confirmed = False
     try:
         page.goto(job.url, wait_until="domcontentloaded")
         try:
@@ -204,14 +217,35 @@ def run_tier1_dry_run(
             button = form.get_by_role("button", name=re.compile(r"submit application|submit", re.I))
             if button.count() != 1:
                 raise RuntimeError("Could not uniquely identify the application submit button")
+            # Text already on the page cannot prove that this submission succeeded.
+            confirmation_preexisting = page.get_by_text(CONFIRMATION_PATTERN).count() > 0
+            submit_attempted = True
             button.click()
+            confirmed = not confirmation_preexisting and _wait_for_confirmation(page)
     except Exception as error:
+        if submit_attempted:
+            LOGGER.exception(
+                "%s submit outcome unknown for %s; verify manually", job.platform, job.url
+            )
+            return ApplierResult(
+                "unknown", answers, str(screenshot_path), None,
+                f"{UNKNOWN_OUTCOME_ERROR} {type(error).__name__}: {error}",
+                resume_uploaded, suggested,
+            )
         LOGGER.exception("%s applier failed for %s", job.platform, job.url)
         return ApplierResult(
             "failed", answers, str(screenshot_path) if screenshot_saved else None, None,
             f"{type(error).__name__}: {error}", resume_uploaded, suggested
         )
 
+    if submit_attempted and not confirmed:
+        LOGGER.warning(
+            "%s submit outcome unknown for %s; verify manually", job.platform, job.url
+        )
+        return ApplierResult(
+            "unknown", answers, str(screenshot_path), None, UNKNOWN_OUTCOME_ERROR,
+            resume_uploaded, suggested,
+        )
     if submit_live and manual_review:
         LOGGER.warning("Not submitting %s because it still needs manual review", job.url)
     elif fill_reviewed_motivation_drafts and suggested:
@@ -226,6 +260,16 @@ def run_tier1_dry_run(
         suggested_answers=suggested,
         submitted=submit_live and not manual_review,
     )
+
+
+def _wait_for_confirmation(page: Page) -> bool:
+    try:
+        page.get_by_text(CONFIRMATION_PATTERN).first.wait_for(
+            state="visible", timeout=CONFIRMATION_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        return False
+    return True
 
 
 def _find_form(page: Page) -> Locator:

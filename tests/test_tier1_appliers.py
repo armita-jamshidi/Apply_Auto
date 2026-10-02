@@ -1,5 +1,7 @@
 """Mocked tests for non-Greenhouse Tier 1 browser appliers."""
 
+import logging
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,6 +49,9 @@ class FakePage:
         self.submitted = False
         self.screenshot_path: str | None = None
         self.valid = True
+        self.visible_text: list[str] = []
+        self.confirmation_text: str | None = "Application submitted!"
+        self.click_error: Exception | None = None
 
     @property
     def first(self) -> "FakePage":
@@ -85,7 +90,18 @@ class FakePage:
         field = self.fields.get(label)
         return field or SimpleNamespace(count=lambda: 0)
 
-    def get_by_text(self, text: str, *, exact: bool):
+    def get_by_text(self, text: str | re.Pattern[str], *, exact: bool = False):
+        if isinstance(text, re.Pattern):
+            def matches() -> list[str]:
+                return [item for item in self.visible_text if text.search(item)]
+
+            def wait_for_match(**_kwargs):
+                if not matches():
+                    raise PlaywrightTimeoutError("Confirmation is not visible")
+
+            first = SimpleNamespace(wait_for=wait_for_match)
+            return SimpleNamespace(count=lambda: len(matches()), first=first)
+
         attached = any(
             field.uploaded and Path(field.uploaded).name == text for field in self.fields.values()
         )
@@ -113,6 +129,10 @@ class FakePage:
 
     def _submit(self) -> None:
         self.submitted = True
+        if self.click_error is not None:
+            raise self.click_error
+        if self.confirmation_text:
+            self.visible_text.append(self.confirmation_text)
 
 
 def create_profile(tmp_path: Path) -> tuple[Path, Path]:
@@ -268,3 +288,116 @@ def test_tier1_live_call_never_submits_browser_invalid_form(tmp_path: Path) -> N
     assert result.status == "manual_review"
     assert result.submitted is False
     assert page.submitted is False
+
+
+def create_complete_page() -> FakePage:
+    return FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Email", kind="email"),
+            FakeField("Resume", kind="file"),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform", "url", "confirmation"),
+    [
+        ("lever", "https://jobs.lever.co/sample/job-1", "Application submitted!"),
+        ("ashby", "https://jobs.ashbyhq.com/sample/job-1", "Thank you for applying."),
+        (
+            "smartrecruiters",
+            "https://jobs.smartrecruiters.com/Sample/1",
+            "Your application has been successfully submitted",
+        ),
+    ],
+)
+def test_tier1_live_submit_is_applied_only_after_confirmation(
+    tmp_path: Path,
+    platform: str,
+    url: str,
+    confirmation: str,
+) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.confirmation_text = confirmation
+
+    result = run_tier1_dry_run(
+        page,
+        create_job(platform, url),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+        submit_live=True,
+    )
+
+    assert result.status == "applied"
+    assert result.submitted is True
+
+
+def test_tier1_live_submit_without_confirmation_is_unknown(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.confirmation_text = None
+
+    with caplog.at_level(logging.WARNING):
+        result = run_tier1_dry_run(
+            page,
+            create_job("lever", "https://jobs.lever.co/sample/job-1"),
+            profile,
+            resume,
+            tmp_path / "filled.png",
+            resume_text="Python engineer.",
+            submit_live=True,
+        )
+
+    assert page.submitted is True
+    assert result.status == "unknown"
+    assert result.submitted is False
+    assert "verify manually" in (result.error or "")
+    assert "verify manually" in caplog.text
+
+
+def test_tier1_live_submit_click_error_is_unknown_not_failed(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.click_error = PlaywrightTimeoutError("Navigation interrupted")
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("ashby", "https://jobs.ashbyhq.com/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+        submit_live=True,
+    )
+
+    assert result.status == "unknown"
+    assert result.submitted is False
+    assert "Navigation interrupted" in (result.error or "")
+    assert result.screenshot_path == str(tmp_path / "filled.png")
+
+
+def test_tier1_confirmation_text_present_before_submit_is_not_trusted(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.visible_text.append("Thanks for applying! We review every application.")
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("smartrecruiters", "https://jobs.smartrecruiters.com/Sample/1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+        submit_live=True,
+    )
+
+    assert page.submitted is True
+    assert result.status == "unknown"

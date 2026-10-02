@@ -40,7 +40,7 @@ STANDARD_FIELDS = {
 class ApplierResult:
     """Outcome of filling a Greenhouse form without submitting it."""
 
-    status: Literal["dry_run_ready", "manual_review", "failed", "applied"]
+    status: Literal["dry_run_ready", "manual_review", "failed", "applied", "unknown"]
     answers: dict[str, str | None]
     screenshot_path: str | None
     tailored_resume_path: str | None
