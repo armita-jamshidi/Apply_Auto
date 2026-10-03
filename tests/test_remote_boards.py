@@ -9,6 +9,7 @@ from agent import pipeline
 from agent.filters import normalize_location
 from agent.settings import load_settings, title_in_scope
 from agent.sources.remote_boards import (
+    fetch_himalayas,
     fetch_hn_whos_hiring,
     fetch_weworkremotely,
     remote_us_label,
@@ -54,6 +55,7 @@ def test_wwr_keeps_jobs_open_to_the_us() -> None:
     [
         ("USA Only", "Remote - US (USA Only)"),
         ("North America Only", "Remote - US (North America Only)"),
+        ("Northern America, Europe", "Remote - US (Northern America, Europe)"),
         ("Europe Only", None),
         ("", "Remote - US"),
     ],
@@ -91,6 +93,69 @@ def test_hn_thread_parses_role_and_location_from_the_first_line() -> None:
     assert normalize_location(by_company["Anywhere AI"].location_raw) == "remote_us"
     assert normalize_location(by_company["Euro AI"].location_raw) == "other"
     assert "We build agents." in by_company["Acme"].description
+
+
+def test_himalayas_searches_each_query_and_level_and_keeps_us_jobs() -> None:
+    settings = load_settings()
+    seen: list[dict[str, str]] = []
+
+    def job(title: str, company: str, regions: list[str]) -> dict:
+        slug = title.lower().replace(" ", "-")
+        return {
+            "title": title,
+            "companyName": company,
+            "locationRestrictions": regions,
+            "applicationLink": f"https://himalayas.app/companies/{company}/jobs/{slug}",
+            "description": "<p>Build agents.</p>",
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    job("AI Engineer", "acme", ["United States"]),
+                    job("Agent Engineer", "world", []),
+                    job("ML Engineer", "euro", ["Germany"]),
+                    job("Tax Manager", "taxco", ["United States"]),
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    jobs = fetch_himalayas(
+        client,
+        experience_levels=("early", "mid", "unknown"),
+        queries=("ai engineer", "agent engineer"),
+        title_filter=lambda t: title_in_scope(t, settings),
+    )
+
+    assert [(p["q"], p["seniority"]) for p in seen] == [
+        ("ai engineer", "Entry-level"),
+        ("ai engineer", "Mid-level"),
+        ("agent engineer", "Entry-level"),
+        ("agent engineer", "Mid-level"),
+    ]
+    assert all(p["country"] == "United States" and "page" not in p for p in seen)
+    assert [(j.company, j.title) for j in jobs] == [
+        ("acme", "AI Engineer"),
+        ("world", "Agent Engineer"),
+    ]
+    assert all(normalize_location(j.location_raw) == "remote_us" for j in jobs)
+    assert jobs[0].platform == "himalayas" and "Build agents." in jobs[0].description
+
+
+def test_himalayas_without_a_mapped_level_searches_once_unfiltered() -> None:
+    seen: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json={"jobs": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert fetch_himalayas(client, experience_levels=("unknown",), queries=("ai engineer",)) == []
+    assert seen == [{"q": "ai engineer", "country": "United States"}]
 
 
 def test_cap_keeps_the_best_two_jobs_per_company() -> None:

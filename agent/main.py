@@ -25,7 +25,11 @@ from agent.settings import (
     title_in_scope,
 )
 from agent.sources.new_grad_list import fetch_new_grad_companies
-from agent.sources.remote_boards import fetch_hn_whos_hiring, fetch_weworkremotely
+from agent.sources.remote_boards import (
+    fetch_himalayas,
+    fetch_hn_whos_hiring,
+    fetch_weworkremotely,
+)
 from agent.types import JobListing
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -163,6 +167,11 @@ def _sources(
         "weworkremotely": fetch_weworkremotely,
         "hackernews": functools.partial(
             fetch_hn_whos_hiring, title_filter=lambda title: title_in_scope(title, settings)
+        ),
+        "himalayas": functools.partial(
+            fetch_himalayas,
+            experience_levels=settings.experience_levels,
+            title_filter=lambda title: title_in_scope(title, settings),
         ),
     }
     for board in settings.remote_boards:

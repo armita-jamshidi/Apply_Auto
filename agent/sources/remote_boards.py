@@ -2,11 +2,14 @@
 
 - We Work Remotely: the public RSS feed (its robots.txt allows crawling).
 - Hacker News "Who is hiring?": the monthly thread, through HN's public Algolia search API.
+- Himalayas: the public job search API, first page of each query only (its robots.txt
+  disallows the paged URLs).
 
-Both return JobListing records that go through the same title, location, and level filters
+Each returns JobListing records that go through the same title, location, and level filters
 as company boards. Jobs whose region does not include the US are dropped here, and
 US-eligible remote jobs are labelled "Remote - US (...)" so the location filter keeps them.
-Boards that block automated access (for example SimplyHired's bot check) are not used.
+Boards that block automated access (for example SimplyHired's bot check) or whose robots.txt
+disallows their API (for example Remotive) are not used.
 """
 
 import logging
@@ -25,9 +28,20 @@ USER_AGENT = "job-agent/0.1 (personal job search)"
 WWR_FEED_URL = "https://weworkremotely.com/remote-jobs.rss"
 HN_SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date"
 HN_ITEM_URL = "https://hn.algolia.com/api/v1/items/{id}"
+HIMALAYAS_SEARCH_URL = "https://himalayas.app/jobs/api/search"
+HIMALAYAS_QUERIES = (
+    "ai engineer",
+    "machine learning engineer",
+    "llm engineer",
+    "agent engineer",
+    "applied ai engineer",
+)
+# Our experience levels mapped to Himalayas' seniority filter values.
+HIMALAYAS_SENIORITY = {"early": "Entry-level", "mid": "Mid-level", "senior": "Senior"}
 # Regions that include people working from the US.
 _US_REGION = re.compile(
-    r"\b(?:anywhere|worldwide|world|global|usa?|u\.s\.?|united states|north america|americas)\b",
+    r"\b(?:anywhere|worldwide|world|global|usa?|u\.s\.?|united states|north(?:ern)? america|"
+    r"americas)\b",
     re.IGNORECASE,
 )
 _WORK_MODE = re.compile(r"\b(?:remote|hybrid|on-?site|in[- ]office)\b", re.IGNORECASE)
@@ -166,6 +180,71 @@ def _hn_listing(
         url=f"https://news.ycombinator.com/item?id={comment_id}",
         location_raw=location[:500],
         description=description.strip(),
+    )
+
+
+def fetch_himalayas(
+    client: httpx.Client | None = None,
+    *,
+    experience_levels: tuple[str, ...] = ("early", "mid"),
+    queries: tuple[str, ...] = HIMALAYAS_QUERIES,
+    title_filter: Callable[[str], bool] | None = None,
+) -> list[JobListing]:
+    """Search Himalayas for each query at each experience level, US-eligible jobs only.
+
+    Only the first page (20 jobs) of each search is read. Levels without a Himalayas
+    seniority value ("unknown") are not searched unless no level maps, in which case each
+    query is searched once without a seniority filter.
+    """
+    seniorities = [
+        HIMALAYAS_SENIORITY[level] for level in experience_levels if level in HIMALAYAS_SENIORITY
+    ] or [None]
+    owns_client = client is None
+    http = client or httpx.Client(timeout=30, headers={"User-Agent": USER_AGENT})
+    listings: dict[str, JobListing] = {}
+    try:
+        for query in queries:
+            for seniority in seniorities:
+                params: dict[str, str | int | bool] = {"q": query, "country": "United States"}
+                if seniority:
+                    params["seniority"] = seniority
+                payload = request_json(
+                    http,
+                    HIMALAYAS_SEARCH_URL,
+                    params=params,
+                    max_retries=2,
+                    backoff_seconds=1,
+                    validate=_as_dict,
+                )
+                for job in payload.get("jobs") or []:
+                    listing = _himalayas_listing(job, title_filter)
+                    if listing is not None:
+                        listings.setdefault(listing.url, listing)
+    finally:
+        if owns_client:
+            http.close()
+    return list(listings.values())
+
+
+def _himalayas_listing(
+    job: dict, title_filter: Callable[[str], bool] | None
+) -> JobListing | None:
+    title = " ".join(str(job.get("title") or "").split())
+    url = str(job.get("applicationLink") or job.get("guid") or "").strip()
+    if not title or not url or (title_filter is not None and not title_filter(title)):
+        return None
+    regions = [str(region) for region in job.get("locationRestrictions") or []]
+    location = remote_us_label(", ".join(regions))
+    if location is None:
+        return None
+    return JobListing(
+        source="himalayas",
+        platform="himalayas",
+        company=str(job.get("companyName") or "").strip()[:200] or "Unknown company",
+        title=title,
+        url=url,
+        location_raw=location[:500],
+        description=str(job.get("description") or job.get("excerpt") or "").strip(),
     )
 
 

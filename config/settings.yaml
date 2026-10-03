@@ -13,9 +13,10 @@ discovery:
   # Drop roles whose description requires more than this many years of experience. A
   # mid-level role (for example "Engineer II") must state that it needs this many or fewer.
   max_years_experience: 2
-  # Also read these remote job boards and forums: weworkremotely (RSS feed) and hackernews
-  # (the monthly "Who is hiring?" thread). Remove an entry to stop reading it.
-  remote_boards: [weworkremotely, hackernews]
+  # Also read these remote job boards and forums: weworkremotely (RSS feed), hackernews
+  # (the monthly "Who is hiring?" thread), and himalayas (job search API, searched for AI,
+  # ML, LLM, and agent engineer roles open to the US). Remove an entry to stop reading it.
+  remote_boards: [weworkremotely, hackernews, himalayas]
   # Keep at most this many open jobs per company, the best fit scores first.
   max_jobs_per_company: 2
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
