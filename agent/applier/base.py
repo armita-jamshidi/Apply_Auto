@@ -109,8 +109,13 @@ def run_tier1_dry_run(
     resume_text: str | None = None,
     fill_reviewed_motivation_drafts: bool = False,
     submit_live: bool = False,
+    human_challenge_wait_ms: int = 0,
 ) -> ApplierResult:
-    """Fill supported controls for a Tier 1 ATS; submission is default-off."""
+    """Fill supported controls for a Tier 1 ATS; submission is default-off.
+
+    With human_challenge_wait_ms, a CAPTCHA is left for the person at the browser to solve;
+    filling continues once the form appears. The agent never solves challenges itself.
+    """
     supported_hosts = PLATFORM_HOSTS.get(job.platform)
     if not supported_hosts or not any(
         re.match(rf"^https://{re.escape(host)}/", job.url, flags=re.IGNORECASE)
@@ -151,6 +156,21 @@ def run_tier1_dry_run(
             job_description = read_page_description(page, selectors)
 
         challenge = _bot_challenge(page)
+        if challenge and human_challenge_wait_ms:
+            LOGGER.warning(
+                "The application page shows %s. Solve it in the browser window; "
+                "filling continues when the form appears (waiting up to %d minutes).",
+                challenge,
+                human_challenge_wait_ms // 60000,
+            )
+            try:
+                page.locator("input, textarea, select").first.wait_for(
+                    state="attached", timeout=human_challenge_wait_ms
+                )
+                _open_wait(page, job.platform)
+            except PlaywrightTimeoutError:
+                LOGGER.warning("The challenge was not completed in time for %s", job.url)
+            challenge = _bot_challenge(page)
         if challenge:
             LOGGER.warning("%s form for %s is behind %s", job.platform, job.url, challenge)
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -366,6 +386,10 @@ def run_tier1_dry_run(
 
 def _open(page: Page, url: str, platform: str) -> None:
     page.goto(url, wait_until="domcontentloaded")
+    _open_wait(page, platform)
+
+
+def _open_wait(page: Page, platform: str) -> None:
     try:
         page.wait_for_load_state("networkidle", timeout=15000)
     except PlaywrightTimeoutError:

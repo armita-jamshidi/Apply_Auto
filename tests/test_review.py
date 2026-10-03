@@ -230,3 +230,116 @@ def test_dry_run_writes_review_page_and_runs_headless(
     output = capsys.readouterr().out
     assert f"Review page: {review_path}" in output
     assert "3 filled, 1 draft, 2 manual_review, 1 skipped" in output
+
+
+def test_hand_off_and_live_cannot_be_combined() -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--job-url", JOB.url, "--hand-off", "--live"])
+
+
+def test_review_page_links_form_and_reopen_command(tmp_path: Path) -> None:
+    page_path = tmp_path / "review.html"
+    args = cli.build_parser().parse_args(
+        ["--platform", "lever", "--job-url", "https://jobs.lever.co/sample/job-1"]
+    )
+
+    write_review_page(
+        page_path,
+        job=JOB,
+        result=make_result(),
+        fit=FitSummary(score=70),
+        resume_name="resume.pdf",
+        form_url=cli.form_url("lever", args.job_url),
+        finish_command=cli.finish_command(args, 'Sample "Co"', "Engineer"),
+    )
+
+    html = page_path.read_text(encoding="utf-8")
+    assert "Finish this application" in html
+    assert "https://jobs.lever.co/sample/job-1/apply" in html
+    assert (
+        "python -m agent.applier.cli --hand-off --platform lever "
+        "--job-url &quot;https://jobs.lever.co/sample/job-1&quot; "
+        "--company &quot;Sample Co&quot; --title &quot;Engineer&quot;"
+    ) in html
+
+
+def test_hand_off_fills_in_kept_browser_and_waits_for_person(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    events: list[object] = []
+    review_path = tmp_path / "review.html"
+
+    class FakeHandOffPage:
+        def wait_for_event(self, name: str, *, timeout: int) -> None:
+            assert review_path.is_file(), "review page must exist before waiting"
+            events.append(("wait", name, timeout))
+
+    page = FakeHandOffPage()
+
+    class FakePlaywright:
+        def __enter__(self):
+            def launch_persistent_context(user_data_dir: str, *, headless: bool):
+                events.append(("launch", user_data_dir, headless))
+                return SimpleNamespace(
+                    pages=[page], close=lambda: events.append("closed")
+                )
+
+            def launch(**_kwargs):
+                raise AssertionError("hand-off must use the persistent browser profile")
+
+            return SimpleNamespace(
+                chromium=SimpleNamespace(
+                    launch=launch, launch_persistent_context=launch_persistent_context
+                )
+            )
+
+        def __exit__(self, *_exc) -> None:
+            return None
+
+    filler_kwargs: dict[str, object] = {}
+
+    def fake_lever(used_page, *_args, **kwargs):
+        assert used_page is page
+        filler_kwargs.update(kwargs)
+        return make_result()
+
+    monkeypatch.setattr(cli, "sync_playwright", FakePlaywright)
+    monkeypatch.setattr(cli, "BROWSER_PROFILE_DIR", tmp_path / "profile")
+    monkeypatch.setitem(cli.APPLIERS, "lever", fake_lever)
+    monkeypatch.setattr(cli, "_load_stored_job", lambda _url: None)
+    monkeypatch.setattr(cli, "_dry_run_fit", lambda *_args: FitSummary(score=80))
+    opened: list[str] = []
+    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "job-apply",
+            "--hand-off",
+            "--platform",
+            "lever",
+            "--job-url",
+            "https://jobs.lever.co/sample/job-1",
+            "--resume",
+            str(tmp_path / "resume.pdf"),
+            "--screenshot",
+            str(tmp_path / "shot.png"),
+            "--review",
+            str(review_path),
+        ],
+    )
+
+    cli.main()
+
+    assert events == [
+        ("launch", str(tmp_path / "profile"), False),
+        ("wait", "close", 0),
+        "closed",
+    ]
+    assert filler_kwargs["submit_live"] is False
+    assert filler_kwargs["human_challenge_wait_ms"] == cli.HUMAN_CHALLENGE_WAIT_MS
+    assert opened == [review_path.resolve().as_uri()]
+    output = capsys.readouterr().out
+    assert "submit it yourself" in output
+    assert "Mode: hand_off" in output
+    assert output.count("Review page:") == 1

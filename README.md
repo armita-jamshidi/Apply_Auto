@@ -117,6 +117,21 @@ After every dry run, an HTML review page is saved under the ignored `reviews/` d
 
 The CLI also prints the review path and a count of fields per status.
 
+### Finishing an application yourself (hand-off)
+
+`--hand-off` fills the real form in a visible browser and leaves it open for you:
+
+```powershell
+python -m agent.applier.cli --hand-off --platform lever --job-url "https://jobs.lever.co/example/123"
+```
+
+- Log in if the site asks, check every field against the review page (it opens automatically), answer the questions marked for manual review, and submit the form yourself. The agent never clicks Submit in this mode.
+- The browser uses a saved profile under the ignored `.playwright/profile/` directory, so sites you sign into stay signed in on later runs.
+- If a CAPTCHA appears, solve it yourself in that window; filling continues once the form shows (the agent waits up to 10 minutes and never tries to solve it).
+- Close the window when you are done. Every review page includes a **Finish this application** section with the form link and this command, already filled in for that job.
+
+`--hand-off` cannot be combined with `--live`.
+
 Live submission is an explicit `--live` opt-in. Before opening the form, the CLI:
 
 - requires the job to be in the database (run discovery first);

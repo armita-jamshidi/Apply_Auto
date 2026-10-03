@@ -68,6 +68,7 @@ class FakePage:
         ]
         self.iframes: list[str] = []
         self.form_selectors = {"form", "[role='form']", "main", "body"}
+        self.pending_fields: list[FakeField] = []
         self.form_lookups: list[str] = []
 
     @property
@@ -112,7 +113,17 @@ class FakePage:
                 ),
             )
         if selector == "input, textarea, select":
-            return SimpleNamespace(count=lambda: len(self.fields))
+            def wait_for_form(*, state: str, timeout: int) -> None:
+                assert state == "attached" and timeout > 0
+                if not self.pending_fields:
+                    raise PlaywrightTimeoutError("Form did not appear")
+                self.fields.update({field.label: field for field in self.pending_fields})
+                self.pending_fields = []
+                self.iframes = []
+
+            return SimpleNamespace(
+                count=lambda: len(self.fields), first=SimpleNamespace(wait_for=wait_for_form)
+            )
         if selector == "iframe":
             return SimpleNamespace(
                 count=lambda: len(self.iframes),
@@ -843,3 +854,54 @@ def test_ashby_choice_heading_and_options_become_one_review_row(tmp_path: Path) 
     assert result.field_notes["Race"] == (
         "Checkbox or radio choices are not automated; choose manually."
     )
+
+
+SMARTRECRUITERS_FORM = (
+    "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc"
+)
+
+
+def test_hand_off_waits_for_person_to_solve_captcha_then_fills(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = FakePage([])
+    page.iframes = ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]
+    page.pending_fields = [
+        FakeField("First Name"),
+        FakeField("Last Name"),
+        FakeField("Email", kind="email"),
+        FakeField("Resume", kind="file"),
+    ]
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("smartrecruiters", SMARTRECRUITERS_FORM),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+        human_challenge_wait_ms=60000,
+    )
+
+    assert result.status == "dry_run_ready"
+    assert page.fields["First Name"].value == "Sample"
+    assert result.resume_uploaded is True
+    assert page.submitted is False
+
+
+def test_hand_off_captcha_left_unsolved_still_stops_safely(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = FakePage([])
+    page.iframes = ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("smartrecruiters", SMARTRECRUITERS_FORM),
+        profile,
+        resume,
+        tmp_path / "blocked.png",
+        resume_text="Python engineer.",
+        human_challenge_wait_ms=60000,
+    )
+
+    assert result.status == "manual_review"
+    assert result.answers == {}

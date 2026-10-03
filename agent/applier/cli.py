@@ -3,11 +3,13 @@
 import argparse
 import logging
 import os
+import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -38,6 +40,9 @@ PLATFORM_HOSTS = {
     "ashby": ("jobs.ashbyhq.com",),
     "smartrecruiters": ("jobs.smartrecruiters.com",),
 }
+# Hand-off browser profile: keeps the logins people make in that window between runs.
+BROWSER_PROFILE_DIR = PROJECT_ROOT / ".playwright" / "profile"
+HUMAN_CHALLENGE_WAIT_MS = 10 * 60 * 1000
 APPLIERS = {
     "lever": run_lever_application,
     "ashby": run_ashby_application,
@@ -87,7 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fill an evidence-validated motivation draft; review remains required.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--live",
         action="store_true",
         help=(
@@ -95,7 +101,34 @@ def build_parser() -> argparse.ArgumentParser:
             "guards pass."
         ),
     )
+    mode.add_argument(
+        "--hand-off",
+        action="store_true",
+        help=(
+            "Fill the form in a visible browser and leave it open for you to log in, "
+            "finish, and submit yourself. Never submits."
+        ),
+    )
     return parser
+
+
+def finish_command(args: argparse.Namespace, company: str, title: str) -> str:
+    """Return the command that reopens this job's form, filled, in hand-off mode."""
+
+    def quoted(value: object) -> str:
+        return '"' + str(value).replace('"', "") + '"'
+
+    return (
+        f"python -m agent.applier.cli --hand-off --platform {args.platform} "
+        f"--job-url {quoted(args.job_url)} --company {quoted(company)} --title {quoted(title)}"
+    )
+
+
+def form_url(platform: str, job_url: str) -> str:
+    """Best link to the application form; SmartRecruiters' is only known from its page."""
+    if platform == "greenhouse":
+        return job_url
+    return application_urls(platform, job_url)[1] or job_url
 
 
 def _validate_job_url(url: str, platform: str) -> None:
@@ -158,6 +191,32 @@ def _dry_run_fit(stored: Job | None, description: str, profile_path: Path) -> Fi
         dealbreakers=assessment.dealbreakers,
         recommended_action=assessment.recommended_action,
     )
+
+
+def _report_dry_run(
+    args: argparse.Namespace,
+    job: JobListing,
+    result: ApplierResult,
+    stored: Job | None,
+    description: str,
+    review_path: Path,
+) -> None:
+    fit = _dry_run_fit(stored, result.job_description or description, args.profile)
+    rows = write_review_page(
+        review_path,
+        job=job,
+        result=result,
+        fit=fit,
+        resume_name=args.resume.name,
+        form_url=form_url(args.platform, args.job_url),
+        finish_command=finish_command(args, job.company, job.title),
+    )
+    counts = ", ".join(
+        f"{count} {status}" for status, count in count_statuses(rows).items() if count
+    )
+    print(f"Review page: {review_path}")
+    print(f"Fields: {counts}")
+    print(f"Fit score: {fit.score if fit.score is not None else fit.note}")
 
 
 def _prepare_live_application(
@@ -297,15 +356,25 @@ def main() -> int:
         description=description,
     )
 
+    reported = False
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=not args.headed)
-            try:
+            if args.hand_off:
+                BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+                browser = playwright.chromium.launch_persistent_context(
+                    str(BROWSER_PROFILE_DIR), headless=False
+                )
+                page = browser.pages[0] if browser.pages else browser.new_page()
+            else:
+                browser = playwright.chromium.launch(headless=not args.headed)
                 page = browser.new_page()
-                kwargs = {
+            try:
+                kwargs: dict[str, object] = {
                     "fill_reviewed_motivation_drafts": args.fill_reviewed_motivation_drafts,
                     "submit_live": args.live,
                 }
+                if args.hand_off and args.platform != "greenhouse":
+                    kwargs["human_challenge_wait_ms"] = HUMAN_CHALLENGE_WAIT_MS
                 if args.platform == "greenhouse":
                     result = run_greenhouse_dry_run(
                         page,
@@ -324,6 +393,19 @@ def main() -> int:
                         screenshot_path,
                         **kwargs,
                     )
+                if args.hand_off:
+                    _report_dry_run(args, job, result, stored, description, review_path)
+                    reported = True
+                    webbrowser.open(review_path.resolve().as_uri())
+                    print(
+                        "\nThe filled form is open in the browser window. Log in if the site "
+                        "asks, check every field against the review page, answer what is "
+                        "left, and submit it yourself. Close the window when you are done."
+                    )
+                    try:
+                        page.wait_for_event("close", timeout=0)
+                    except PlaywrightError:
+                        LOGGER.info("Hand-off browser closed")
             finally:
                 browser.close()
         if args.live:
@@ -334,20 +416,11 @@ def main() -> int:
         if engine is not None:
             engine.dispose()
 
-    if not args.live:
-        fit = _dry_run_fit(stored, result.job_description or description, args.profile)
-        rows = write_review_page(
-            review_path, job=job, result=result, fit=fit, resume_name=args.resume.name
-        )
-        counts = ", ".join(
-            f"{count} {status}" for status, count in count_statuses(rows).items() if count
-        )
-        print(f"Review page: {review_path}")
-        print(f"Fields: {counts}")
-        print(f"Fit score: {fit.score if fit.score is not None else fit.note}")
+    if not args.live and not reported:
+        _report_dry_run(args, job, result, stored, description, review_path)
 
     print(f"Status: {result.status}")
-    print(f"Mode: {'live' if args.live else 'dry_run'}")
+    print(f"Mode: {'live' if args.live else 'hand_off' if args.hand_off else 'dry_run'}")
     print(f"Resume uploaded: {'yes' if result.resume_uploaded else 'no'}")
     print(f"Submitted: {'yes' if result.submitted else 'no'}")
     print(f"Screenshot: {result.screenshot_path or 'not captured'}")

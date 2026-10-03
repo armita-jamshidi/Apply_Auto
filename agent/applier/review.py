@@ -82,6 +82,8 @@ def write_review_page(
     fit: FitSummary,
     resume_name: str,
     generated_at: datetime | None = None,
+    form_url: str | None = None,
+    finish_command: str | None = None,
 ) -> list[FieldRow]:
     """Write a self-contained HTML review page and return the field rows it shows."""
     rows = review_rows(result, resume_name)
@@ -124,6 +126,23 @@ def write_review_page(
         if result.error
         else ""
     )
+    finish_html = ""
+    if form_url or finish_command:
+        link_html = (
+            f"<p>Application form: <a href='{escape(form_url)}'>{escape(form_url)}</a></p>"
+            if form_url
+            else ""
+        )
+        command_html = (
+            "<p>To get the form already filled in, in a browser window that stays open for you "
+            "to log in, finish, and submit, run this from the project folder:</p>"
+            f"<pre class='command'>{escape(finish_command)}</pre>"
+            if finish_command
+            else ""
+        )
+        finish_html = (
+            f"<section><h2>Finish this application</h2>{link_html}{command_html}</section>"
+        )
     description_html = (
         f"<details><summary>Job description</summary><pre>{escape(description)}</pre></details>"
         if description
@@ -182,6 +201,10 @@ pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
 .filled {{ color: var(--filled); }} .draft {{ color: var(--draft); }}
 .manual_review {{ color: var(--manual); }} .skipped {{ color: var(--skipped); }}
 details pre {{ margin-top: 12px; max-height: 480px; overflow: auto; }}
+pre.command {{
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
+}}
 </style>
 </head>
 <body>
@@ -197,6 +220,7 @@ details pre {{ margin-top: 12px; max-height: 480px; overflow: auto; }}
 </dl>
 {error_html}
 </header>
+{finish_html}
 <section>
 <h2>Fit score</h2>
 {fit_html}

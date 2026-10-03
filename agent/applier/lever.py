@@ -20,6 +20,7 @@ def run_lever_application(
     answers_client: Anthropic | None = None,
     fill_reviewed_motivation_drafts: bool = False,
     submit_live: bool = False,
+    human_challenge_wait_ms: int = 0,
 ) -> ApplierResult:
     """Fill a Lever application; only submit when explicitly authorized and complete."""
     return run_tier1_dry_run(
@@ -31,4 +32,5 @@ def run_lever_application(
         answers_client=answers_client,
         fill_reviewed_motivation_drafts=fill_reviewed_motivation_drafts,
         submit_live=submit_live,
+        human_challenge_wait_ms=human_challenge_wait_ms,
     )
