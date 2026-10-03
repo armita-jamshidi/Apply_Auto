@@ -15,9 +15,13 @@ from agent.types import JobListing
 
 
 class FakeField:
-    def __init__(self, label: str, kind: str = "text") -> None:
+    def __init__(
+        self, label: str, kind: str = "text", group: str | None = None, linked: bool = True
+    ) -> None:
         self.label = label
         self.kind = kind
+        self.group = group
+        self.linked = linked
         self.value = ""
         self.uploaded: str | None = None
 
@@ -95,10 +99,17 @@ class FakePage:
                 evaluate=lambda _expression: True,
             )
         if selector == "label":
-            labels = list(self.fields)
+            fields = list(self.fields.values())
             return SimpleNamespace(
-                count=lambda: len(labels),
-                nth=lambda index: SimpleNamespace(inner_text=lambda: labels[index]),
+                count=lambda: len(fields),
+                nth=lambda index: SimpleNamespace(
+                    inner_text=lambda: fields[index].label,
+                    evaluate=lambda _script: {
+                        "text": fields[index].label,
+                        "kind": fields[index].kind if fields[index].linked else None,
+                        "group": fields[index].group,
+                    },
+                ),
             )
         if selector == "input, textarea, select":
             return SimpleNamespace(count=lambda: len(self.fields))
@@ -120,7 +131,7 @@ class FakePage:
 
     def get_by_label(self, label: str, *, exact: bool):
         field = self.fields.get(label)
-        return field or SimpleNamespace(count=lambda: 0)
+        return field if field is not None and field.linked else SimpleNamespace(count=lambda: 0)
 
     def get_by_text(self, text: str | re.Pattern[str], *, exact: bool = False):
         if isinstance(text, re.Pattern):
@@ -524,7 +535,7 @@ def test_tier1_records_notes_for_blank_and_skipped_fields(
     assert result.field_notes["Email"] == "Skipped: no matching field on this form."
     assert result.field_notes["Why do you want to work here?"] == "No grounded answer was found."
     assert result.field_notes["Required unsupported"] == (
-        "Unsupported control type (input/checkbox)."
+        "Checkbox or radio choices are not automated; choose manually."
     )
     assert result.job_description == "Python role."
 
@@ -762,3 +773,48 @@ def test_missing_resume_input_is_explained(tmp_path: Path) -> None:
     )
 
     assert result.field_notes["Resume"] == "No file upload control was found."
+
+
+def test_lever_style_labels_group_choices_and_strip_required_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture_job_context(monkeypatch)
+    profile, resume = create_profile(tmp_path)
+    page = FakePage(
+        [
+            FakeField("Name"),
+            FakeField("Full name \u2731"),
+            FakeField("Email \u2731", kind="email"),
+            FakeField("Resume", kind="file"),
+            FakeField("English (ENG)", kind="checkbox", group="Which languages do you speak?"),
+            FakeField("Spanish (SPA)", kind="checkbox", group="Which languages do you speak?"),
+            FakeField("Yes", kind="radio", group="Are you authorized to work in the US?"),
+            FakeField("No", kind="radio", group="Are you authorized to work in the US?"),
+            FakeField("Yes ", kind="radio", group="Will you require sponsorship?"),
+            FakeField("Transcript", kind="file"),
+            FakeField("Where are you located?", linked=False),
+        ]
+    )
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    group_note = "Checkbox or radio choices are not automated; choose manually."
+    assert result.answers["Which languages do you speak?"] is None
+    assert result.field_notes["Which languages do you speak?"] == group_note
+    assert result.field_notes["Are you authorized to work in the US?"] == group_note
+    assert result.field_notes["Will you require sponsorship?"] == group_note
+    assert not {"English (ENG)", "Spanish (SPA)", "Yes", "No"} & set(result.answers)
+    assert "Full name \u2731" not in result.answers
+    assert "Email \u2731" not in result.answers
+    assert "Transcript" not in result.answers
+    assert result.field_notes["Transcript"].startswith("Skipped: file uploads")
+    assert result.answers["Where are you located?"] is None
+    assert "custom widget" in result.field_notes["Where are you located?"]
+    assert page.fields["Resume"].uploaded == str(resume)

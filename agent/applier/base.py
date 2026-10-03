@@ -16,6 +16,10 @@ from agent.applier.confirmation import (
     wait_for_confirmation,
 )
 from agent.applier.greenhouse import (
+    CHOICE_GROUP_NOTE,
+    CHOICE_KINDS,
+    NO_CONTROL_NOTE,
+    OTHER_UPLOAD_NOTE,
     ApplierResult,
     _answer_for_choice_question,
     _as_text,
@@ -23,6 +27,8 @@ from agent.applier.greenhouse import (
     _normalize_label,
     _select_combobox_option,
     extract_resume_text,
+    find_labelled_control,
+    inspect_label,
     load_profile,
     read_page_description,
 )
@@ -33,8 +39,11 @@ STANDARD_FIELDS = {
     "first name",
     "last name",
     "name",
+    "full name",
     "email",
+    "email address",
     "phone",
+    "phone number",
     "linkedin",
     "linkedin profile",
     "linkedin profile url",
@@ -209,19 +218,35 @@ def run_tier1_dry_run(
 
         form = _find_form(page)
         labels = form.locator("label")
+        seen_groups: set[str] = set()
         for index in range(labels.count()):
-            label_text = " ".join(labels.nth(index).inner_text().split())
+            info = inspect_label(labels.nth(index))
+            label_text = info.text
             normalized = _normalize_label(label_text)
             if not label_text or normalized in STANDARD_FIELDS or "resume" in normalized:
                 if normalized == "cover letter":
                     notes[label_text] = "Skipped: cover letters are not automated."
                 continue
-            accessible_label = re.sub(r"\s*\*\s*$", "", label_text).strip()
-            locator = page.get_by_label(accessible_label, exact=False)
+            if info.kind == "file":
+                notes[label_text] = OTHER_UPLOAD_NOTE
+                continue
+            if info.kind in CHOICE_KINDS:
+                group = info.group or label_text
+                if group not in seen_groups:
+                    seen_groups.add(group)
+                    manual_review = True
+                    answers[group] = None
+                    notes[group] = CHOICE_GROUP_NOTE
+                continue
+            locator = find_labelled_control(page, label_text)
             if locator.count() != 1:
                 manual_review = True
                 answers[label_text] = None
-                notes[label_text] = f"Expected one matching control, found {locator.count()}."
+                notes[label_text] = (
+                    NO_CONTROL_NOTE
+                    if info.kind is None
+                    else f"Expected one matching control, found {locator.count()}."
+                )
                 continue
             if (locator.get_attribute("role") or "").casefold() == "combobox":
                 choice = _answer_for_choice_question(label_text, profile)

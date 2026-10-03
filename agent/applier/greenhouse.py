@@ -23,12 +23,37 @@ from agent.profile_schema import CandidateProfile
 from agent.types import JobListing
 
 LOGGER = logging.getLogger(__name__)
+REQUIRED_MARKER = re.compile(r"\s*[*\u2731]+\s*$")
+CHOICE_KINDS = frozenset({"checkbox", "radio"})
+CHOICE_GROUP_NOTE = "Checkbox or radio choices are not automated; choose manually."
+NO_CONTROL_NOTE = "No form control is linked to this label (custom widget); answer manually."
+OTHER_UPLOAD_NOTE = "Skipped: file uploads other than the resume are not automated."
+# Reads a label's own text (without nested dropdown options) and what control it labels.
+LABEL_INFO_SCRIPT = """label => {
+  const clone = label.cloneNode(true);
+  clone.querySelectorAll('select, option, input, textarea, button').forEach(node => node.remove());
+  const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
+  const control = label.control;
+  const kind = control ? (control.type || control.tagName.toLowerCase()) : null;
+  let group = null;
+  if (control && (kind === 'checkbox' || kind === 'radio')) {
+    const box = control.closest(
+      'fieldset, [role="group"], [role="radiogroup"], .application-question'
+    );
+    const heading = box && box.querySelector('legend, .application-label, .text');
+    group = clean(heading ? heading.textContent : '') || control.name || null;
+  }
+  return {text: clean(clone.textContent), kind, group};
+}"""
 STANDARD_FIELDS = {
     "first name",
     "last name",
     "name",
+    "full name",
     "email",
+    "email address",
     "phone",
+    "phone number",
     "linkedin",
     "linkedin profile",
     "linkedin profile url",
@@ -40,6 +65,15 @@ STANDARD_FIELDS = {
     "cv",
     "cover letter",
 }
+
+@dataclass(frozen=True, slots=True)
+class LabelInfo:
+    """A form label's own text and the control it labels; kind None means no control."""
+
+    text: str
+    kind: str | None
+    group: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class ApplierResult:
@@ -157,8 +191,10 @@ def run_greenhouse_dry_run(
             LOGGER.info("Resume upload failed or could not be verified for %s", job.url)
 
         labels = page.locator("#application-form label")
+        seen_groups: set[str] = set()
         for index in range(labels.count()):
-            label_text = " ".join(labels.nth(index).inner_text().split())
+            info = inspect_label(labels.nth(index))
+            label_text = info.text
             normalized = _normalize_label(label_text)
             if (
                 not label_text
@@ -169,12 +205,26 @@ def run_greenhouse_dry_run(
                 if normalized == "cover letter":
                     notes[label_text] = "Skipped: cover letters are not automated."
                 continue
-            accessible_label = re.sub(r"\s*\*\s*$", "", label_text).strip()
-            locator = page.get_by_label(accessible_label, exact=False)
+            if info.kind == "file":
+                notes[label_text] = OTHER_UPLOAD_NOTE
+                continue
+            if info.kind in CHOICE_KINDS:
+                group = info.group or label_text
+                if group not in seen_groups:
+                    seen_groups.add(group)
+                    manual_review = True
+                    answers[group] = None
+                    notes[group] = CHOICE_GROUP_NOTE
+                continue
+            locator = find_labelled_control(page, label_text)
             if locator.count() != 1:
                 manual_review = True
                 answers[label_text] = None
-                notes[label_text] = f"Expected one matching control, found {locator.count()}."
+                notes[label_text] = (
+                    NO_CONTROL_NOTE
+                    if info.kind is None
+                    else f"Expected one matching control, found {locator.count()}."
+                )
                 continue
 
             control_role = (locator.get_attribute("role") or "").casefold()
@@ -414,8 +464,37 @@ def _wait_for_resume_attachment(page: Page, file_input: Locator, resume_path: Pa
             return False
 
 
+def inspect_label(label: Locator) -> LabelInfo:
+    """Describe a label; if the browser cannot inspect it, fall back to its visible text."""
+    visible_text = " ".join(label.inner_text().split())
+    try:
+        data = label.evaluate(LABEL_INFO_SCRIPT)
+    except PlaywrightError:
+        return LabelInfo(visible_text, "unknown")
+    if not isinstance(data, dict):
+        return LabelInfo(visible_text, "unknown")
+    return LabelInfo(
+        str(data.get("text") or visible_text),
+        data.get("kind"),
+        data.get("group"),
+    )
+
+
+def find_labelled_control(page: Page, label_text: str) -> Locator:
+    """Find a control by its label without the required marker, preferring an exact match."""
+    accessible_label = strip_required_marker(label_text)
+    exact = page.get_by_label(accessible_label, exact=True)
+    if exact.count() == 1:
+        return exact
+    return page.get_by_label(accessible_label, exact=False)
+
+
+def strip_required_marker(label: str) -> str:
+    return REQUIRED_MARKER.sub("", " ".join(label.split())).strip()
+
+
 def _normalize_label(label: str) -> str:
-    return re.sub(r"\s+", " ", label).strip().rstrip("*").strip().casefold()
+    return strip_required_marker(label).casefold()
 
 
 def _as_text(value: object) -> str | None:

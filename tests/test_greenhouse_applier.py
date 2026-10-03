@@ -23,8 +23,12 @@ class FakeField:
         field_type: str = "text",
         role: str | None = None,
         options: list[str] | None = None,
+        group: str | None = None,
+        linked: bool = True,
     ) -> None:
         self.label = label
+        self.group = group
+        self.linked = linked
         self.tag = tag
         self.field_type = field_type
         self.role = role
@@ -74,16 +78,21 @@ class FakeField:
 
 
 class FakeLabel:
-    def __init__(self, text: str) -> None:
-        self.text = text
+    def __init__(self, field: FakeField) -> None:
+        self.field = field
 
     def inner_text(self) -> str:
-        return self.text
+        return self.field.label
+
+    def evaluate(self, _script: str) -> dict[str, str | None]:
+        field = self.field
+        kind = (field.field_type if field.tag == "input" else field.tag) if field.linked else None
+        return {"text": field.label, "kind": kind, "group": field.group}
 
 
 class FakeLabels:
-    def __init__(self, labels: list[str]) -> None:
-        self.labels = [FakeLabel(label) for label in labels]
+    def __init__(self, fields: list[FakeField]) -> None:
+        self.labels = [FakeLabel(field) for field in fields]
 
     def count(self) -> int:
         return len(self.labels)
@@ -108,7 +117,7 @@ class FakePage:
 
     def locator(self, selector: str) -> FakeLabels | FakeField | SimpleNamespace:
         if selector == "#application-form label":
-            return FakeLabels(list(self.fields))
+            return FakeLabels(list(self.fields.values()))
         if selector == "#application-form":
             return SimpleNamespace(evaluate=lambda _expression: True)
         if selector == "#resume":
@@ -120,14 +129,16 @@ class FakePage:
         raise AssertionError(f"Unexpected locator selector: {selector}")
 
     def get_by_label(self, label: str, *, exact: bool) -> FakeField | SimpleNamespace:
+        # A trailing asterisk is treated as aria-hidden, so it is not part of the name.
         if exact:
-            field = self.fields.get(label)
+            matches = [item for name, item in self.fields.items() if name.rstrip("*") == label]
         else:
-            field = next(
-                (item for name, item in self.fields.items() if label.casefold() in name.casefold()),
-                None,
-            )
-        return field if field is not None else SimpleNamespace(count=lambda: 0)
+            matches = [
+                item for name, item in self.fields.items() if label.casefold() in name.casefold()
+            ]
+        if len(matches) == 1:
+            return matches[0]
+        return SimpleNamespace(count=lambda: len(matches))
 
     def get_by_role(self, role: str, *, name: str, exact: bool) -> FakeField | SimpleNamespace:
         if role == "option":
@@ -745,5 +756,30 @@ def test_dry_run_records_why_fields_were_skipped_or_left_blank(tmp_path: Path) -
     assert result.field_notes["GitHub URL"] == "Skipped: no matching field on this form."
     assert "do not provide a supported answer" in result.field_notes["Years of Rust experience"]
     assert result.field_notes["I agree to the terms"] == (
-        "Unsupported control type (input/checkbox)."
+        "Checkbox or radio choices are not automated; choose manually."
     )
+
+
+def test_exact_label_match_is_preferred_over_partial_matches(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField("Country*"),
+            FakeField("Country code"),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        answers_client=mock_answer_client("United States", "United States"),
+        resume_text="Python developer. United States",
+    )
+
+    assert "Expected one matching control" not in result.field_notes.get("Country*", "")
