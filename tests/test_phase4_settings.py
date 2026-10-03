@@ -42,3 +42,22 @@ def test_settings_load_live_application_caps(tmp_path: Path) -> None:
     assert settings.fit_score_threshold == 75
     assert settings.daily_application_cap == 3
     assert settings.company_monthly_application_cap == 2
+
+
+def test_relative_sqlite_file_is_anchored_to_the_project(monkeypatch, tmp_path: Path) -> None:
+    from agent import settings
+
+    monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path)
+
+    resolved = settings.resolve_database_url("sqlite:///data/jobs.db")
+
+    assert resolved == f"sqlite:///{(tmp_path / 'data' / 'jobs.db').as_posix()}"
+    assert (tmp_path / "data").is_dir()
+
+
+def test_non_file_database_urls_are_unchanged() -> None:
+    from agent.settings import resolve_database_url
+
+    postgres = "postgresql+psycopg://user:pw@localhost:5432/jobs"
+    assert resolve_database_url(postgres) == postgres
+    assert resolve_database_url("sqlite+pysqlite:///:memory:") == "sqlite+pysqlite:///:memory:"

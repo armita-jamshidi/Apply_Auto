@@ -61,6 +61,7 @@ class Application(Base):
     answers: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     tailored_resume_path: Mapped[str | None] = mapped_column(String(2048))
     screenshot_path: Mapped[str | None] = mapped_column(String(2048))
+    review_path: Mapped[str | None] = mapped_column(String(2048))
     error: Mapped[str | None] = mapped_column(Text)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

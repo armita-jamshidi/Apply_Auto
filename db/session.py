@@ -16,6 +16,13 @@ def create_database_engine(database_url: str) -> Engine:
     return create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
 
 
+def ensure_schema(engine: Engine) -> None:
+    """Create any missing tables (a fresh local SQLite file needs this; Postgres uses Alembic)."""
+    from db.models import Base
+
+    Base.metadata.create_all(engine)
+
+
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Create a typed session factory bound to an engine."""
     return sessionmaker(bind=engine, expire_on_commit=False)

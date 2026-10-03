@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -63,7 +64,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     if daily_application_cap < 1 or company_monthly_application_cap < 1:
         raise ValueError("application caps must be at least 1")
     return AgentSettings(
-        database_url=database_url,
+        database_url=resolve_database_url(database_url),
         include_hybrid_nc=bool(location.get("include_hybrid_nc", True)),
         max_retries=int(network.get("max_retries", 3)),
         backoff_seconds=float(network.get("backoff_seconds", 0.5)),
@@ -72,6 +73,20 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         daily_application_cap=daily_application_cap,
         company_monthly_application_cap=company_monthly_application_cap,
     )
+
+
+def resolve_database_url(database_url: str) -> str:
+    """Anchor a relative SQLite file to the project folder and create its directory."""
+    url = make_url(database_url)
+    database = url.database or ""
+    if url.get_backend_name() != "sqlite" or database in {"", ":memory:"}:
+        return database_url
+    path = Path(database)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Forward slashes avoid percent-encoding Windows drive letters and backslashes.
+    return f"{url.drivername}:///{path.as_posix()}"
 
 
 def load_companies(config_path: Path | None = None) -> list[CompanyConfig]:
