@@ -82,6 +82,12 @@ Requires Python 3.11+, Docker Compose, and Git. GitHub Actions runs Ruff and pyt
 
    The CLI prints newly found and previously known in-scope listings. It continues to other companies if one board request fails. `DATABASE_URL` from `.env` overrides `config/settings.yaml`.
 
+Install the privacy guard once per clone. It is a git pre-commit hook that blocks any commit staging private files (profile, resumes, `.env`, databases, screenshots, review pages, the dashboard, browser profiles) or added lines containing identifying values from your local profile (name, email, phone, profile links, location, employers, schools, start date, resume file name). It reads those values locally and reports only categories:
+
+```powershell
+python scripts/install_hooks.py
+```
+
 To run the tests and linter without PostgreSQL:
 
 ```powershell
