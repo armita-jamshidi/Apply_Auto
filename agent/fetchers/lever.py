@@ -1,6 +1,8 @@
 """Fetcher for Lever's public postings API."""
 
 import logging
+import re
+from html import unescape
 from typing import Any
 
 import httpx
@@ -44,7 +46,7 @@ def fetch_lever_jobs(
         try:
             categories = item.get("categories") or {}
             location = categories.get("location") or categories.get("allLocations") or ""
-            description = item.get("descriptionPlain") or item.get("description") or ""
+            description = _full_description(item)
             jobs.append(
                 JobListing(
                     source="lever",
@@ -59,6 +61,28 @@ def fetch_lever_jobs(
         except (AttributeError, KeyError, TypeError) as error:
             LOGGER.warning("Skipping malformed Lever listing for %s: %s", company, error)
     return jobs
+
+
+def _full_description(item: dict[str, Any]) -> str:
+    """Join the intro, requirement lists, and closing text; descriptionPlain is only the intro."""
+    parts = [str(item.get("descriptionPlain") or item.get("description") or "").strip()]
+    for section in item.get("lists") or []:
+        if not isinstance(section, dict):
+            continue
+        heading = str(section.get("text") or "").strip()
+        bullets = [
+            f"- {_html_to_text(entry)}"
+            for entry in re.findall(r"<li[^>]*>(.*?)</li>", str(section.get("content") or ""), re.S)
+            if _html_to_text(entry)
+        ]
+        if heading or bullets:
+            parts.append("\n".join(([heading] if heading else []) + bullets))
+    parts.append(str(item.get("additionalPlain") or "").strip())
+    return "\n\n".join(part for part in parts if part)
+
+
+def _html_to_text(fragment: str) -> str:
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
 
 
 def _as_list(payload: object) -> list[dict[str, Any]]:

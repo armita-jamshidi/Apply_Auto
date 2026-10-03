@@ -36,6 +36,41 @@ def test_fetch_lever_jobs_normalizes_postings_and_skips_malformed() -> None:
     assert jobs[0].description == "Build services."
 
 
+def test_fetch_lever_jobs_includes_requirement_lists_and_closing_text() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "text": "Forward Deployed Engineer",
+                    "hostedUrl": "https://jobs.lever.co/example/2",
+                    "categories": {"location": "Raleigh, NC"},
+                    "descriptionPlain": "Intro paragraph.",
+                    "lists": [
+                        {
+                            "text": "What We Require",
+                            "content": "<li>Active security clearance &amp; US citizenship</li>"
+                            "<li><b>Python</b> experience</li>",
+                        },
+                        {"text": "Empty", "content": ""},
+                    ],
+                    "additionalPlain": "Salary range: listed.",
+                }
+            ],
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    jobs = fetch_lever_jobs("example", "Example Co", client=client)
+    client.close()
+
+    assert jobs[0].description == (
+        "Intro paragraph.\n\n"
+        "What We Require\n- Active security clearance & US citizenship\n- Python experience\n\n"
+        "Empty\n\n"
+        "Salary range: listed."
+    )
+
+
 def test_fetch_ashby_jobs_uses_public_board_and_skips_unlisted() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/posting-api/job-board/example")
