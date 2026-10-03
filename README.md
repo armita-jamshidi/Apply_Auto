@@ -130,7 +130,8 @@ python -m agent.applier.cli --hand-off --platform lever --job-url "https://jobs.
 ```
 
 - Log in if the site asks, check every field against the review page (it opens automatically), answer the questions marked for manual review, and submit the form yourself. The agent never clicks Submit in this mode.
-- The browser uses a saved profile under the ignored `.playwright/profile/` directory, so sites you sign into stay signed in on later runs.
+- The browser is your installed Google Chrome (`--browser chromium` uses Playwright's bundled browser instead; Chrome falls back to it automatically if it is not installed). It uses a separate saved profile under the ignored `.playwright/profile/` directory, so sites you sign into there stay signed in on later runs. `--browser-profile` picks another folder; your everyday Chrome profile is refused, because Chrome blocks automation there and it holds all your logins.
+- Submit soon after the form fills, because CAPTCHA checks expire. Reloading the page clears the answers, so if a CAPTCHA has expired, close the window and run the command again for a fresh fill.
 - If a CAPTCHA appears, solve it yourself in that window; filling continues once the form shows (the agent waits up to 10 minutes and never tries to solve it).
 - Close the window when you are done. Every review page includes a **Finish this application** section with the form link and this command, already filled in for that job.
 

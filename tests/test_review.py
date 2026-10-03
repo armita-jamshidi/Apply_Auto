@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from agent.applier import cli
 from agent.applier.greenhouse import ApplierResult
@@ -278,8 +279,10 @@ def test_hand_off_fills_in_kept_browser_and_waits_for_person(
 
     class FakePlaywright:
         def __enter__(self):
-            def launch_persistent_context(user_data_dir: str, *, headless: bool):
-                events.append(("launch", user_data_dir, headless))
+            def launch_persistent_context(
+                user_data_dir: str, *, headless: bool, channel: str | None = None
+            ):
+                events.append(("launch", user_data_dir, headless, channel))
                 return SimpleNamespace(
                     pages=[page], close=lambda: events.append("closed")
                 )
@@ -332,7 +335,7 @@ def test_hand_off_fills_in_kept_browser_and_waits_for_person(
     cli.main()
 
     assert events == [
-        ("launch", str(tmp_path / "profile"), False),
+        ("launch", str((tmp_path / "profile").resolve()), False, "chrome"),
         ("wait", "close", 0),
         "closed",
     ]
@@ -343,3 +346,60 @@ def test_hand_off_fills_in_kept_browser_and_waits_for_person(
     assert "submit it yourself" in output
     assert "Mode: hand_off" in output
     assert output.count("Review page:") == 1
+
+
+class FakeChromium:
+    def __init__(self, chrome_installed: bool = True) -> None:
+        self.calls: list[str | None] = []
+        self.chrome_installed = chrome_installed
+
+    def launch_persistent_context(
+        self, user_data_dir: str, *, headless: bool, channel: str | None = None
+    ):
+        assert headless is False
+        self.calls.append(channel)
+        if channel == "chrome" and not self.chrome_installed:
+            raise PlaywrightError("Chromium distribution 'chrome' is not found")
+        return SimpleNamespace(user_data_dir=user_data_dir)
+
+
+def test_hand_off_uses_installed_chrome_by_default(tmp_path: Path) -> None:
+    chromium = FakeChromium()
+
+    context = cli.launch_hand_off_browser(
+        SimpleNamespace(chromium=chromium), "chrome", tmp_path / "profile"
+    )
+
+    assert chromium.calls == ["chrome"]
+    assert context.user_data_dir == str((tmp_path / "profile").resolve())
+
+
+def test_hand_off_falls_back_to_bundled_chromium_without_chrome(tmp_path: Path) -> None:
+    chromium = FakeChromium(chrome_installed=False)
+
+    cli.launch_hand_off_browser(SimpleNamespace(chromium=chromium), "chrome", tmp_path / "p")
+
+    assert chromium.calls == ["chrome", None]
+
+
+def test_browser_chromium_skips_installed_chrome(tmp_path: Path) -> None:
+    chromium = FakeChromium()
+
+    cli.launch_hand_off_browser(SimpleNamespace(chromium=chromium), "chromium", tmp_path / "p")
+
+    assert chromium.calls == [None]
+
+
+def test_everyday_chrome_profile_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    everyday = tmp_path / "Google" / "Chrome" / "User Data"
+    monkeypatch.setattr(cli, "DEFAULT_CHROME_PROFILES", (everyday,))
+    chromium = FakeChromium()
+
+    for folder in (everyday, everyday / "Default"):
+        with pytest.raises(SystemExit, match="everyday Chrome profile"):
+            cli.launch_hand_off_browser(SimpleNamespace(chromium=chromium), "chrome", folder)
+
+    assert chromium.calls == []
+    assert cli.is_everyday_chrome_profile(tmp_path / "hand-off") is False

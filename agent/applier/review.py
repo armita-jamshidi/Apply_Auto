@@ -40,6 +40,18 @@ class FieldRow:
     note: str | None
 
 
+def hand_off_command(platform: str, job_url: str, company: str, title: str) -> str:
+    """Return the command that reopens a job's form, filled, in hand-off mode."""
+
+    def quoted(value: object) -> str:
+        return '"' + str(value).replace('"', "") + '"'
+
+    return (
+        f"python -m agent.applier.cli --hand-off --platform {platform} "
+        f"--job-url {quoted(job_url)} --company {quoted(company)} --title {quoted(title)}"
+    )
+
+
 def review_rows(result: ApplierResult, resume_name: str) -> list[FieldRow]:
     """Order fields as the filler met them, then resume and fields that were never answered."""
     rows: list[FieldRow] = []

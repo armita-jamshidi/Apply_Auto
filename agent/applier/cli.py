@@ -9,8 +9,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from playwright.sync_api import BrowserContext, Playwright, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -24,7 +24,12 @@ from agent.applier.greenhouse import (
     run_greenhouse_dry_run,
 )
 from agent.applier.lever import run_lever_application
-from agent.applier.review import FitSummary, count_statuses, write_review_page
+from agent.applier.review import (
+    FitSummary,
+    count_statuses,
+    hand_off_command,
+    write_review_page,
+)
 from agent.applier.smartrecruiters import run_smartrecruiters_application
 from agent.safeguards import live_application_block_reason
 from agent.scorer import score_job
@@ -43,6 +48,13 @@ PLATFORM_HOSTS = {
 # Hand-off browser profile: keeps the logins people make in that window between runs.
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".playwright" / "profile"
 HUMAN_CHALLENGE_WAIT_MS = 10 * 60 * 1000
+# Everyday Chrome profiles: automation must not use them (Chrome blocks it, and they hold
+# every login the person has).
+DEFAULT_CHROME_PROFILES = (
+    Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")) / "Google" / "Chrome" / "User Data",
+    Path("~/Library/Application Support/Google/Chrome"),
+    Path("~/.config/google-chrome"),
+)
 APPLIERS = {
     "lever": run_lever_application,
     "ashby": run_ashby_application,
@@ -101,6 +113,20 @@ def build_parser() -> argparse.ArgumentParser:
             "guards pass."
         ),
     )
+    parser.add_argument(
+        "--browser",
+        choices=("chrome", "chromium"),
+        default="chrome",
+        help=(
+            "Browser for --hand-off: your installed Google Chrome (default) or Playwright's "
+            "bundled Chromium."
+        ),
+    )
+    parser.add_argument(
+        "--browser-profile",
+        type=Path,
+        help="Profile folder for --hand-off (default: .playwright/profile in the project).",
+    )
     mode.add_argument(
         "--hand-off",
         action="store_true",
@@ -112,16 +138,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def launch_hand_off_browser(
+    playwright: Playwright, browser: str, profile_dir: Path | None
+) -> BrowserContext:
+    """Open a visible, persistent browser for hand-off, preferring the installed Chrome."""
+    profile = (profile_dir or BROWSER_PROFILE_DIR).expanduser().resolve()
+    if is_everyday_chrome_profile(profile):
+        raise SystemExit(
+            "--browser-profile must not be your everyday Chrome profile; Chrome blocks "
+            "automation there and it holds all your logins. Use a separate folder."
+        )
+    profile.mkdir(parents=True, exist_ok=True)
+    if browser == "chrome":
+        try:
+            return playwright.chromium.launch_persistent_context(
+                str(profile), headless=False, channel="chrome"
+            )
+        except PlaywrightError as error:
+            LOGGER.warning(
+                "Could not start installed Google Chrome; using Playwright's Chromium: %s",
+                str(error).splitlines()[0],
+            )
+    return playwright.chromium.launch_persistent_context(str(profile), headless=False)
+
+
+def is_everyday_chrome_profile(profile: Path) -> bool:
+    """Return whether a folder is, or is inside, a default Chrome user-data directory."""
+    resolved = profile.expanduser().resolve()
+    for default in DEFAULT_CHROME_PROFILES:
+        root = default.expanduser().resolve()
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
+
+
 def finish_command(args: argparse.Namespace, company: str, title: str) -> str:
     """Return the command that reopens this job's form, filled, in hand-off mode."""
-
-    def quoted(value: object) -> str:
-        return '"' + str(value).replace('"', "") + '"'
-
-    return (
-        f"python -m agent.applier.cli --hand-off --platform {args.platform} "
-        f"--job-url {quoted(args.job_url)} --company {quoted(company)} --title {quoted(title)}"
-    )
+    return hand_off_command(args.platform, args.job_url, company, title)
 
 
 def form_url(platform: str, job_url: str) -> str:
@@ -360,10 +413,7 @@ def main() -> int:
     try:
         with sync_playwright() as playwright:
             if args.hand_off:
-                BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-                browser = playwright.chromium.launch_persistent_context(
-                    str(BROWSER_PROFILE_DIR), headless=False
-                )
+                browser = launch_hand_off_browser(playwright, args.browser, args.browser_profile)
                 page = browser.pages[0] if browser.pages else browser.new_page()
             else:
                 browser = playwright.chromium.launch(headless=not args.headed)
@@ -400,7 +450,10 @@ def main() -> int:
                     print(
                         "\nThe filled form is open in the browser window. Log in if the site "
                         "asks, check every field against the review page, answer what is "
-                        "left, and submit it yourself. Close the window when you are done."
+                        "left, and submit it yourself. Close the window when you are done.\n"
+                        "Submit soon after the form fills: CAPTCHA checks expire. If one says "
+                        "it expired, close this window and run the same command again for a "
+                        "fresh fill (reloading the page clears the answers)."
                     )
                     try:
                         page.wait_for_event("close", timeout=0)
