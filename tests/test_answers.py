@@ -259,3 +259,23 @@ def test_motivation_draft_with_unverifiable_claim_is_rejected() -> None:
     assert decision.answer is None
     assert decision.needs_manual_review is True
     assert "could not be verified" in (decision.reason or "")
+
+
+@pytest.mark.parametrize(
+    ("question", "drafted"),
+    [
+        ("How did you know it worked? What did success actually look like?", True),
+        ("What's the most impactful thing you've built? What was your contribution?", True),
+        ("What programming language do you use most?", False),
+    ],
+)
+def test_long_questions_in_text_boxes_get_drafts(question: str, drafted: bool) -> None:
+    client = make_client(None, None, tool_name=WHY_TOOL_NAME)
+
+    answer_custom_question(
+        question, {"name": "Sample"}, "Built a Python service.", client=client,
+        model="test-model", long_form=True,
+    )
+
+    tool = client.messages.create.call_args.kwargs["tools"][0]["name"]
+    assert (tool == WHY_TOOL_NAME) is drafted

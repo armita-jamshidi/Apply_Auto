@@ -304,6 +304,7 @@ def run_greenhouse_dry_run(
                         "title": job.title,
                         "description": job_description,
                     },
+                    long_form=control_tag == "textarea",
                 )
             except Exception as error:
                 LOGGER.exception("Could not answer custom Greenhouse question %r", label_text)
@@ -423,15 +424,33 @@ def read_page_description(page: Page, selectors: tuple[str, ...]) -> str:
     return ""
 
 
+# Controls a profile value (name, email, link) must never be typed into.
+_NOT_TEXT_INPUTS = frozenset(
+    {"radio", "checkbox", "file", "submit", "button", "reset", "hidden", "image"}
+)
+
+
 def _fill_label(page: Page, label: str, value: str | None, answers: dict[str, str | None]) -> bool:
+    """Type a profile value into the first text box whose label contains `label`.
+
+    Labels are matched loosely ("LinkedIn" matches "Link to your LinkedIn profile"), so a
+    radio option such as "Social media (LinkedIn, X)" can match too; it is skipped.
+    """
     if not value:
         return False
     locator = page.get_by_label(label, exact=False)
-    if locator.count() == 0:
-        return False
-    locator.first.fill(value)
-    answers[label] = value
-    return True
+    for index in range(locator.count()):
+        candidate = locator.first if index == 0 else locator.nth(index)
+        if (candidate.get_attribute("type") or "text").lower() in _NOT_TEXT_INPUTS:
+            continue
+        try:
+            candidate.fill(value)
+        except PlaywrightError as error:
+            LOGGER.info("Could not type into %r: %s", label, str(error).splitlines()[0])
+            continue
+        answers[label] = value
+        return True
+    return False
 
 
 def _upload_resume(page: Page, resume_path: Path) -> bool:

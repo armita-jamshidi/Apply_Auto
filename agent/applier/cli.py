@@ -538,7 +538,11 @@ def main() -> int:
                 page = browser.new_page()
             try:
                 kwargs: dict[str, object] = {
-                    "fill_reviewed_motivation_drafts": args.fill_reviewed_motivation_drafts,
+                    # In hand-off the person reviews the filled form and submits it, so
+                    # written drafts are typed in for them to check there.
+                    "fill_reviewed_motivation_drafts": (
+                        args.fill_reviewed_motivation_drafts or args.hand_off
+                    ),
                     "submit_live": args.live,
                 }
                 if args.hand_off and args.platform != "greenhouse":

@@ -490,7 +490,7 @@ def test_tier1_confirmation_text_present_before_submit_is_not_trusted(tmp_path: 
 def capture_job_context(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
     contexts: list[dict[str, str]] = []
 
-    def fake_answer(question, profile, resume, *, client, job_context):
+    def fake_answer(question, profile, resume, *, client, job_context, **_kwargs):
         contexts.append(dict(job_context))
         return AnswerDecision(answer=None, evidence=None, needs_manual_review=True)
 

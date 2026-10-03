@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from anthropic import Anthropic
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -246,100 +247,110 @@ def run_tier1_dry_run(
         labels = form.locator("label")
         choice_groups = ChoiceGroups(profile)
         for index in range(labels.count()):
-            info = inspect_label(labels.nth(index))
-            label_text = info.text
-            normalized = _normalize_label(label_text)
-            if not label_text or normalized in STANDARD_FIELDS or "resume" in normalized:
-                if normalized == "cover letter":
-                    notes[label_text] = "Skipped: cover letters are not automated."
-                continue
-            if info.kind == "file":
-                notes[label_text] = OTHER_UPLOAD_NOTE
-                continue
-            if info.kind in CHOICE_KINDS:
-                question = info.group or label_text
-                if info.kind == "choice-group":
-                    choice_groups.add(question)
-                else:
-                    choice_groups.add(question, label_text, labels.nth(index))
-                continue
-            locator = find_labelled_control(page, label_text)
-            if locator.count() != 1:
-                manual_review = True
-                answers[label_text] = None
-                notes[label_text] = (
-                    NO_CONTROL_NOTE
-                    if info.kind is None
-                    else f"Expected one matching control, found {locator.count()}."
-                )
-                continue
-            if (locator.get_attribute("role") or "").casefold() == "combobox":
-                choice, problem = choose_combobox_option(page, locator, label_text, profile)
-                answers[label_text] = choice
-                if problem:
-                    manual_review = True
-                    notes[label_text] = problem
-                continue
-
-            tag = locator.evaluate("element => element.tagName.toLowerCase()")
-            field_type = (locator.get_attribute("type") or "text").lower()
-            if tag == "select":
-                choice, problem = choose_select_option(locator, label_text, profile)
-                answers[label_text] = choice
-                if problem:
-                    manual_review = True
-                    notes[label_text] = problem
-                continue
-            if tag not in {"input", "textarea"} or field_type not in {
-                "text", "email", "tel", "url", ""
-            }:
-                manual_review = True
-                answers[label_text] = None
-                notes[label_text] = f"Unsupported control type ({tag}/{field_type})."
-                continue
-            if normalized in DATE_LABELS:
-                answers[label_text] = todays_date()
-                locator.fill(answers[label_text])
-                continue
-            saved_answer = saved_text_answer(label_text, profile)
-            if saved_answer:
-                locator.fill(saved_answer)
-                answers[label_text] = saved_answer
-                continue
+            label_text = ""
             try:
-                decision = answer_custom_question(
-                    label_text,
-                    profile,
-                    resume,
-                    client=answers_client,
-                    job_context={
-                        "company": job.company,
-                        "title": job.title,
-                        "description": job_description,
-                    },
-                )
-            except Exception as error:
-                LOGGER.exception("Could not answer %s question %r", job.platform, label_text)
-                notes[label_text] = f"Answer service error: {type(error).__name__}."
-                decision = None
-            if decision is None or decision.answer is None:
-                manual_review = True
-                answers[label_text] = None
-                if decision is not None:
-                    notes[label_text] = decision.reason or "No grounded answer was found."
-                continue
-            if decision.needs_manual_review:
-                notes[label_text] = decision.reason or "Answer needs candidate review."
-                if decision.is_motivation_draft and fill_reviewed_motivation_drafts:
-                    locator.fill(decision.answer)
-                    answers[label_text] = decision.answer
-                else:
+                info = inspect_label(labels.nth(index))
+                label_text = info.text
+                normalized = _normalize_label(label_text)
+                if not label_text or normalized in STANDARD_FIELDS or "resume" in normalized:
+                    if normalized == "cover letter":
+                        notes[label_text] = "Skipped: cover letters are not automated."
+                    continue
+                if info.kind == "file":
+                    notes[label_text] = OTHER_UPLOAD_NOTE
+                    continue
+                if info.kind in CHOICE_KINDS:
+                    question = info.group or label_text
+                    if info.kind == "choice-group":
+                        choice_groups.add(question)
+                    else:
+                        choice_groups.add(question, label_text, labels.nth(index))
+                    continue
+                locator = find_labelled_control(page, label_text)
+                if locator.count() != 1:
                     manual_review = True
                     answers[label_text] = None
-                    suggested[label_text] = decision.answer
-                continue
-            locator.fill(decision.answer)
-            answers[label_text] = decision.answer
+                    notes[label_text] = (
+                        NO_CONTROL_NOTE
+                        if info.kind is None
+                        else f"Expected one matching control, found {locator.count()}."
+                    )
+                    continue
+                if (locator.get_attribute("role") or "").casefold() == "combobox":
+                    choice, problem = choose_combobox_option(page, locator, label_text, profile)
+                    answers[label_text] = choice
+                    if problem:
+                        manual_review = True
+                        notes[label_text] = problem
+                    continue
+
+                tag = locator.evaluate("element => element.tagName.toLowerCase()")
+                field_type = (locator.get_attribute("type") or "text").lower()
+                if tag == "select":
+                    choice, problem = choose_select_option(locator, label_text, profile)
+                    answers[label_text] = choice
+                    if problem:
+                        manual_review = True
+                        notes[label_text] = problem
+                    continue
+                if tag not in {"input", "textarea"} or field_type not in {
+                    "text", "email", "tel", "url", ""
+                }:
+                    manual_review = True
+                    answers[label_text] = None
+                    notes[label_text] = f"Unsupported control type ({tag}/{field_type})."
+                    continue
+                if normalized in DATE_LABELS:
+                    answers[label_text] = todays_date()
+                    locator.fill(answers[label_text])
+                    continue
+                saved_answer = saved_text_answer(label_text, profile)
+                if saved_answer:
+                    locator.fill(saved_answer)
+                    answers[label_text] = saved_answer
+                    continue
+                try:
+                    decision = answer_custom_question(
+                        label_text,
+                        profile,
+                        resume,
+                        client=answers_client,
+                        job_context={
+                            "company": job.company,
+                            "title": job.title,
+                            "description": job_description,
+                        },
+                        long_form=tag == "textarea",
+                    )
+                except Exception as error:
+                    LOGGER.exception("Could not answer %s question %r", job.platform, label_text)
+                    notes[label_text] = f"Answer service error: {type(error).__name__}."
+                    decision = None
+                if decision is None or decision.answer is None:
+                    manual_review = True
+                    answers[label_text] = None
+                    if decision is not None:
+                        notes[label_text] = decision.reason or "No grounded answer was found."
+                    continue
+                if decision.needs_manual_review:
+                    notes[label_text] = decision.reason or "Answer needs candidate review."
+                    if decision.is_motivation_draft and fill_reviewed_motivation_drafts:
+                        locator.fill(decision.answer)
+                        answers[label_text] = decision.answer
+                    else:
+                        manual_review = True
+                        answers[label_text] = None
+                        suggested[label_text] = decision.answer
+                    continue
+                locator.fill(decision.answer)
+                answers[label_text] = decision.answer
+            except PlaywrightError as error:
+                # One misbehaving control must not stop the rest of the form.
+                LOGGER.warning("Could not fill %r: %s", label_text, str(error).splitlines()[0])
+                manual_review = True
+                field_name = label_text or f"Field {index + 1}"
+                answers.setdefault(field_name, None)
+                notes[field_name] = "Could not fill this field automatically; answer it by hand."
 
         if choice_groups.apply(answers, notes):
             manual_review = True

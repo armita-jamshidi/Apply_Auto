@@ -114,8 +114,13 @@ def answer_custom_question(
     model: str | None = None,
     client: Anthropic | None = None,
     job_context: Mapping[str, str] | None = None,
+    long_form: bool = False,
 ) -> AnswerDecision:
-    """Apply user-approved response rules or return a grounded answer/draft."""
+    """Apply user-approved response rules or return a grounded answer/draft.
+
+    long_form marks a large text box (a textarea). A long or multi-part question there expects
+    written prose, so it gets a cited draft instead of a single quoted phrase.
+    """
     if not question.strip():
         raise ValueError("question cannot be empty")
 
@@ -136,7 +141,7 @@ def answer_custom_question(
     settings = load_settings() if model is None else None
     model_name = model or os.getenv("ANTHROPIC_MODEL") or settings.anthropic_model
     anthropic_client = client or _create_client()
-    if _is_motivation_question(question):
+    if (long_form and _is_open_ended(question)) or _is_motivation_question(question):
         return _draft_motivation_answer(
             question,
             profile,
@@ -274,6 +279,12 @@ def _is_motivation_question(question: str) -> bool:
         or re.search(r"\bhow do your (?:skills|experience|background)\b", normalized)
         or _is_written_response_question(normalized)
     )
+
+
+def _is_open_ended(question: str) -> bool:
+    """A long or multi-part prompt; short factual ones ("What language do you use?") are not."""
+    text = " ".join(question.split())
+    return len(text) >= 50 or text.count("?") > 1
 
 
 def _is_written_response_question(normalized: str) -> bool:
