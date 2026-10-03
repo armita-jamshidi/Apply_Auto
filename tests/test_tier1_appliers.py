@@ -39,6 +39,8 @@ class FakeField:
     def evaluate(self, expression: str) -> str | bool:
         if "input.files" in expression:
             return bool(self.uploaded)
+        if "input.labels" in expression:
+            return self.label
         return "input"
 
     def fill(self, value: str) -> None:
@@ -61,6 +63,8 @@ class FakePage:
             "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc",
         ]
         self.iframes: list[str] = []
+        self.form_selectors = {"form", "[role='form']", "main", "body"}
+        self.form_lookups: list[str] = []
 
     @property
     def first(self) -> "FakePage":
@@ -80,11 +84,13 @@ class FakePage:
         if any(selector in selectors for selectors in DESCRIPTION_SELECTORS.values()):
             return SimpleNamespace(count=lambda: 0)
         if selector == 'input[type="file"]':
-            field = next((item for item in self.fields.values() if item.kind == "file"), None)
-            return field or SimpleNamespace(count=lambda: 0)
-        if selector in {"form", "[role='form']", "main"}:
+            files = [item for item in self.fields.values() if item.kind == "file"]
+            return SimpleNamespace(count=lambda: len(files), nth=lambda index: files[index])
+        if selector in {"form", "[role='form']", "main", "body"}:
+            self.form_lookups.append(selector)
+            present = selector in self.form_selectors
             return SimpleNamespace(
-                count=lambda: 1,
+                count=lambda: 1 if present else 0,
                 first=self,
                 evaluate=lambda _expression: True,
             )
@@ -689,3 +695,70 @@ def test_unrelated_iframe_on_a_real_form_is_not_a_challenge(tmp_path: Path) -> N
     )
 
     assert result.status == "dry_run_ready"
+
+
+def test_ashby_style_page_without_form_uses_body_and_resume_labelled_input(
+    tmp_path: Path,
+) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Email", kind="email"),
+            FakeField("Autofill from resume", kind="file"),
+            FakeField("Resume", kind="file"),
+        ]
+    )
+    page.form_selectors = {"body"}
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("ashby", "https://jobs.ashbyhq.com/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.status == "dry_run_ready"
+    assert page.form_lookups == ["form", "[role='form']", "main", "body"]
+    assert page.fields["Resume"].uploaded == str(resume)
+    assert page.fields["Autofill from resume"].uploaded is None
+    assert result.resume_uploaded is True
+
+
+def test_ambiguous_resume_inputs_route_to_manual_review(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.fields["CV (second copy)"] = FakeField("CV (second copy)", kind="file")
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.status == "manual_review"
+    assert result.resume_uploaded is False
+    assert "could not tell which one takes the resume" in result.field_notes["Resume"]
+    assert all(field.uploaded is None for field in page.fields.values())
+
+
+def test_missing_resume_input_is_explained(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = FakePage([FakeField("First Name"), FakeField("Last Name")])
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.field_notes["Resume"] == "No file upload control was found."

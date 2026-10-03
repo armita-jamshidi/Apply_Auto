@@ -60,6 +60,16 @@ DESCRIPTION_SELECTORS = {
 APPLICATION_SUFFIXES = {"lever": "/apply", "ashby": "/application"}
 SMARTRECRUITERS_FORM_PATH = "/oneclick-ui/"
 BOT_CHALLENGE_HOSTS = ("captcha-delivery.com", "challenges.cloudflare.com", "hcaptcha.com")
+RESUME_LABEL = re.compile(r"^(?!.*autofill).*\b(?:resume|cv)\b", re.IGNORECASE | re.DOTALL)
+FILE_INPUT_LABEL_SCRIPT = (
+    "input => Array.from(input.labels || []).map(label => label.innerText).join(' ')"
+)
+# Works for a <form> or any container, such as Ashby's form-less application page.
+FORM_VALIDITY_SCRIPT = (
+    "element => element.tagName === 'FORM' ? element.checkValidity() : "
+    "Array.from(element.querySelectorAll('input, select, textarea'))"
+    ".every(control => control.checkValidity())"
+)
 
 
 def application_urls(platform: str, url: str) -> tuple[str | None, str | None]:
@@ -177,9 +187,9 @@ def run_tier1_dry_run(
             if value and not _fill_label(page, label, value, answers):
                 notes[label] = "Skipped: no matching field on this form."
 
-        file_inputs = page.locator('input[type="file"]')
-        if file_inputs.count() == 1:
-            file_inputs.set_input_files(str(resume_path))
+        resume_input, resume_problem = _resume_input(page)
+        if resume_input is not None:
+            resume_input.set_input_files(str(resume_path))
             try:
                 page.get_by_text(resume_path.name, exact=True).wait_for(
                     state="visible", timeout=45000
@@ -187,18 +197,15 @@ def run_tier1_dry_run(
                 resume_uploaded = True
             except PlaywrightTimeoutError:
                 resume_uploaded = bool(
-                    file_inputs.count()
-                    and file_inputs.evaluate(
+                    resume_input.evaluate(
                         "input => Boolean(input.files && input.files.length > 0)"
                     )
                 )
+            if not resume_uploaded:
+                resume_problem = "Resume upload failed or could not be verified."
         if not resume_uploaded:
             manual_review = True
-            notes["Resume"] = (
-                "Resume upload failed or could not be verified."
-                if file_inputs.count() == 1
-                else f"Expected one file input, found {file_inputs.count()}."
-            )
+            notes["Resume"] = resume_problem or "Resume upload could not be verified."
 
         form = _find_form(page)
         labels = form.locator("label")
@@ -277,7 +284,7 @@ def run_tier1_dry_run(
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot_path), full_page=True)
         screenshot_saved = True
-        if not form.evaluate("element => element.checkValidity()"):
+        if not form.evaluate(FORM_VALIDITY_SCRIPT):
             manual_review = True
         if submit_live and not manual_review:
             button = form.get_by_role("button", name=re.compile(r"submit application|submit", re.I))
@@ -362,8 +369,27 @@ def _bot_challenge(page: Page) -> str | None:
     return None
 
 
+def _resume_input(page: Page) -> tuple[Locator | None, str | None]:
+    """Pick the resume file input, ignoring extras such as Ashby's autofill-from-resume upload."""
+    file_inputs = page.locator('input[type="file"]')
+    count = file_inputs.count()
+    if count == 1:
+        return file_inputs.nth(0), None
+    if count == 0:
+        return None, "No file upload control was found."
+    labelled = [
+        file_inputs.nth(index)
+        for index in range(count)
+        if RESUME_LABEL.search(file_inputs.nth(index).evaluate(FILE_INPUT_LABEL_SCRIPT) or "")
+    ]
+    if len(labelled) == 1:
+        return labelled[0], None
+    return None, f"Found {count} file inputs and could not tell which one takes the resume."
+
+
 def _find_form(page: Page) -> Locator:
-    for selector in ("form", "[role='form']", "main"):
+    # Ashby renders its application without a form or main element.
+    for selector in ("form", "[role='form']", "main", "body"):
         locator = page.locator(selector)
         if locator.count():
             return locator.first
