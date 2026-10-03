@@ -11,6 +11,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import ValidationError
 
 from agent.answers import AnswerDecision
+from agent.applier.choices import NO_SAVED_ANSWER_NOTE
 from agent.applier.greenhouse import load_profile, run_greenhouse_dry_run
 from agent.types import JobListing
 
@@ -29,6 +30,7 @@ class FakeField:
         self.label = label
         self.group = group
         self.linked = linked
+        self.checked = False
         self.tag = tag
         self.field_type = field_type
         self.role = role
@@ -54,6 +56,8 @@ class FakeField:
         return None
 
     def evaluate(self, _expression: str) -> str:
+        if "closest" in _expression:
+            return self.value or ""
         if "input.files" in _expression:
             return bool(self.uploaded_file)
         if "checkValidity" in _expression:
@@ -73,6 +77,9 @@ class FakeField:
     def click(self) -> None:
         return None
 
+    def press(self, _key: str) -> None:
+        return None
+
     def input_value(self) -> str:
         return self.value or ""
 
@@ -84,7 +91,12 @@ class FakeLabel:
     def inner_text(self) -> str:
         return self.field.label
 
-    def evaluate(self, _script: str) -> dict[str, str | None]:
+    def click(self) -> None:
+        self.field.checked = not self.field.checked
+
+    def evaluate(self, _script: str) -> dict[str, str | None] | bool:
+        if "checked" in _script:
+            return self.field.checked
         field = self.field
         kind = (field.field_type if field.tag == "input" else field.tag) if field.linked else None
         return {"text": field.label, "kind": kind, "group": field.group}
@@ -140,17 +152,21 @@ class FakePage:
             return matches[0]
         return SimpleNamespace(count=lambda: len(matches))
 
-    def get_by_role(self, role: str, *, name: str, exact: bool) -> FakeField | SimpleNamespace:
+    def get_by_role(
+        self, role: str, *, name: object = None, exact: bool = False
+    ) -> FakeField | SimpleNamespace:
         if role == "option":
-            matches = [
-                field
-                for field in self.fields.values()
-                if field.role == "combobox" and name in field.options
-            ]
+            comboboxes = [field for field in self.fields.values() if field.role == "combobox"]
+            if name is None:
+                options = [option for field in comboboxes for option in field.options]
+                return SimpleNamespace(all_inner_texts=lambda: options)
+            matches = [field for field in comboboxes if name in field.options]
             if not matches:
                 return SimpleNamespace(count=lambda: 0)
             field = matches[0]
-            return SimpleNamespace(count=lambda: 1, click=lambda: setattr(field, "value", name))
+            option = SimpleNamespace(count=lambda: 1, click=lambda: setattr(field, "value", name))
+            option.first = option
+            return option
         matches = [
             field
             for field in self.fields.values()
@@ -756,7 +772,7 @@ def test_dry_run_records_why_fields_were_skipped_or_left_blank(tmp_path: Path) -
     assert result.field_notes["GitHub URL"] == "Skipped: no matching field on this form."
     assert "do not provide a supported answer" in result.field_notes["Years of Rust experience"]
     assert result.field_notes["I agree to the terms"] == (
-        "Checkbox or radio choices are not automated; choose manually."
+        NO_SAVED_ANSWER_NOTE
     )
 
 
@@ -783,3 +799,41 @@ def test_exact_label_match_is_preferred_over_partial_matches(tmp_path: Path) -> 
     )
 
     assert "Expected one matching control" not in result.field_notes.get("Country*", "")
+
+
+def test_searchable_dropdown_picks_saved_demographic_answer(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    profile_path.write_text(
+        profile_path.read_text(encoding="utf-8")
+        + "application_answers:\n  eeo:\n    veteran_status: 'no'\n",
+        encoding="utf-8",
+    )
+    question = "Veteran Status *"
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField(
+                question,
+                role="combobox",
+                options=[
+                    "I am a protected veteran",
+                    "I am not a protected veteran",
+                    "I don't wish to answer",
+                ],
+            ),
+        ]
+    )
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        resume_text="Python developer.",
+    )
+
+    assert page.fields[question].value == "I am not a protected veteran"
+    assert result.answers[question] == "I am not a protected veteran"

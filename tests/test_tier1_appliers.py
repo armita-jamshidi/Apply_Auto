@@ -11,17 +11,25 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from agent.answers import AnswerDecision
 from agent.applier.base import DESCRIPTION_SELECTORS, application_urls, run_tier1_dry_run
+from agent.applier.choices import NO_SAVED_ANSWER_NOTE, todays_date
 from agent.types import JobListing
 
 
 class FakeField:
     def __init__(
-        self, label: str, kind: str = "text", group: str | None = None, linked: bool = True
+        self,
+        label: str,
+        kind: str = "text",
+        group: str | None = None,
+        linked: bool = True,
+        options: list[str] | None = None,
     ) -> None:
         self.label = label
         self.kind = kind
+        self.options = options or []
         self.group = group
         self.linked = linked
+        self.checked = False
         self.value = ""
         self.uploaded: str | None = None
 
@@ -45,10 +53,39 @@ class FakeField:
             return bool(self.uploaded)
         if "input.labels" in expression:
             return self.label
-        return "input"
+        return "select" if self.kind == "select" else "input"
+
+    def locator(self, selector: str) -> SimpleNamespace:
+        assert selector == "option"
+        return SimpleNamespace(all_text_contents=lambda: self.options)
+
+    def select_option(self, *, label: str) -> None:
+        assert label in self.options
+        self.value = label
 
     def fill(self, value: str) -> None:
         self.value = value
+
+
+class FakeLabel:
+    def __init__(self, field: FakeField) -> None:
+        self.field = field
+
+    def inner_text(self) -> str:
+        return self.field.label
+
+    def click(self) -> None:
+        self.field.checked = not self.field.checked
+
+    def evaluate(self, script: str) -> dict[str, str | None] | bool:
+        if "checked" in script:
+            return self.field.checked
+        field = self.field
+        return {
+            "text": field.label,
+            "kind": field.kind if field.linked else None,
+            "group": field.group,
+        }
 
 
 class FakePage:
@@ -103,14 +140,7 @@ class FakePage:
             fields = list(self.fields.values())
             return SimpleNamespace(
                 count=lambda: len(fields),
-                nth=lambda index: SimpleNamespace(
-                    inner_text=lambda: fields[index].label,
-                    evaluate=lambda _script: {
-                        "text": fields[index].label,
-                        "kind": fields[index].kind if fields[index].linked else None,
-                        "group": fields[index].group,
-                    },
-                ),
+                nth=lambda index: FakeLabel(fields[index]),
             )
         if selector == "input, textarea, select":
             def wait_for_form(*, state: str, timeout: int) -> None:
@@ -545,9 +575,7 @@ def test_tier1_records_notes_for_blank_and_skipped_fields(
 
     assert result.field_notes["Email"] == "Skipped: no matching field on this form."
     assert result.field_notes["Why do you want to work here?"] == "No grounded answer was found."
-    assert result.field_notes["Required unsupported"] == (
-        "Checkbox or radio choices are not automated; choose manually."
-    )
+    assert result.field_notes["Required unsupported"] == NO_SAVED_ANSWER_NOTE
     assert result.job_description == "Python role."
 
 
@@ -817,7 +845,7 @@ def test_lever_style_labels_group_choices_and_strip_required_markers(
         resume_text="Python engineer.",
     )
 
-    group_note = "Checkbox or radio choices are not automated; choose manually."
+    group_note = NO_SAVED_ANSWER_NOTE
     assert result.answers["Which languages do you speak?"] is None
     assert result.field_notes["Which languages do you speak?"] == group_note
     assert result.field_notes["Are you authorized to work in the US?"] == group_note
@@ -851,9 +879,7 @@ def test_ashby_choice_heading_and_options_become_one_review_row(tmp_path: Path) 
     race_options = {"Race", "Asian", "Hispanic or Latino"}
     race_rows = [label for label in result.answers if label in race_options]
     assert race_rows == ["Race"]
-    assert result.field_notes["Race"] == (
-        "Checkbox or radio choices are not automated; choose manually."
-    )
+    assert result.field_notes["Race"] == NO_SAVED_ANSWER_NOTE
 
 
 SMARTRECRUITERS_FORM = (
@@ -905,3 +931,102 @@ def test_hand_off_captcha_left_unsolved_still_stops_safely(tmp_path: Path) -> No
 
     assert result.status == "manual_review"
     assert result.answers == {}
+
+
+def create_profile_with_answers(tmp_path: Path) -> tuple[Path, Path]:
+    profile = tmp_path / "profile.yaml"
+    profile.write_text(
+        "personal:\n  name: Sample Candidate\n  email: sample@example.com\n"
+        "work_authorization:\n  authorized_to_work_in_us: true\n  requires_sponsorship: false\n"
+        "application_answers:\n"
+        "  languages: [English, Farsi/Persian]\n"
+        "  eeo:\n    disability_status: 'no'\n",
+        encoding="utf-8",
+    )
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"placeholder")
+    return profile, resume
+
+
+def test_saved_answers_tick_radios_checkboxes_select_and_date(tmp_path: Path) -> None:
+    profile, resume = create_profile_with_answers(tmp_path)
+    authorized = "Are you legally authorized to work in the country? \u2731"
+    sponsorship = "Will you require sponsorship?"
+    languages = "Language Skill(s) (Check all that apply) \u2731"
+    page = create_complete_page()
+    for label, question in (
+        ("Yes", authorized),
+        ("No", authorized),
+        ("Yes ", sponsorship),
+        ("No ", sponsorship),
+    ):
+        page.fields[label] = FakeField(label.strip(), kind="radio", group=question)
+        page.fields[label].label = label
+    for language in ("English (ENG)", "Spanish (SPA)", "Other"):
+        page.fields[language] = FakeField(language, kind="checkbox", group=languages)
+    page.fields["Disability status"] = FakeField(
+        "Disability status",
+        kind="select",
+        options=["Select ...", "Yes, I have a disability", "No, I don't have a disability"],
+    )
+    page.fields["Date"] = FakeField("Date")
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.answers[authorized] == "Yes"
+    assert result.answers[sponsorship] == "No "
+    assert page.fields["Yes"].checked and not page.fields["No"].checked
+    assert page.fields["No "].checked and not page.fields["Yes "].checked
+    assert result.answers[languages] == "English (ENG), Other"
+    assert page.fields["English (ENG)"].checked and page.fields["Other"].checked
+    assert not page.fields["Spanish (SPA)"].checked
+    assert page.fields["Disability status"].value == "No, I don't have a disability"
+    assert page.fields["Date"].value == todays_date()
+    assert result.status == "dry_run_ready"
+
+
+def test_already_ticked_option_is_not_toggled_off(tmp_path: Path) -> None:
+    profile, resume = create_profile_with_answers(tmp_path)
+    question = "Are you legally authorized to work in the US?"
+    page = create_complete_page()
+    page.fields["Yes"] = FakeField("Yes", kind="radio", group=question)
+    page.fields["Yes"].checked = True
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert page.fields["Yes"].checked is True
+    assert result.answers[question] == "Yes"
+
+
+def test_saved_answer_with_no_matching_option_is_explained(tmp_path: Path) -> None:
+    profile, resume = create_profile_with_answers(tmp_path)
+    question = "Do you require visa sponsorship?"
+    page = create_complete_page()
+    page.fields["Maybe"] = FakeField("Maybe", kind="radio", group=question)
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.answers[question] is None
+    assert result.field_notes[question] == "No option matched your saved answer (No)."
+    assert result.status == "manual_review"

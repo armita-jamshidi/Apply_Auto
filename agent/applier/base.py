@@ -10,22 +10,26 @@ from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from agent.answers import answer_custom_question
+from agent.applier.choices import (
+    DATE_LABELS,
+    ChoiceGroups,
+    choose_combobox_option,
+    choose_select_option,
+    todays_date,
+)
 from agent.applier.confirmation import (
     UNKNOWN_OUTCOME_ERROR,
     confirmation_visible,
     wait_for_confirmation,
 )
 from agent.applier.greenhouse import (
-    CHOICE_GROUP_NOTE,
     CHOICE_KINDS,
     NO_CONTROL_NOTE,
     OTHER_UPLOAD_NOTE,
     ApplierResult,
-    _answer_for_choice_question,
     _as_text,
     _fill_label,
     _normalize_label,
-    _select_combobox_option,
     extract_resume_text,
     find_labelled_control,
     inspect_label,
@@ -239,7 +243,7 @@ def run_tier1_dry_run(
 
         form = _find_form(page)
         labels = form.locator("label")
-        seen_groups: set[str] = set()
+        choice_groups = ChoiceGroups(profile)
         for index in range(labels.count()):
             info = inspect_label(labels.nth(index))
             label_text = info.text
@@ -252,12 +256,11 @@ def run_tier1_dry_run(
                 notes[label_text] = OTHER_UPLOAD_NOTE
                 continue
             if info.kind in CHOICE_KINDS:
-                group = info.group or label_text
-                if group not in seen_groups:
-                    seen_groups.add(group)
-                    manual_review = True
-                    answers[group] = None
-                    notes[group] = CHOICE_GROUP_NOTE
+                question = info.group or label_text
+                if info.kind == "choice-group":
+                    choice_groups.add(question)
+                else:
+                    choice_groups.add(question, label_text, labels.nth(index))
                 continue
             locator = find_labelled_control(page, label_text)
             if locator.count() != 1:
@@ -270,27 +273,32 @@ def run_tier1_dry_run(
                 )
                 continue
             if (locator.get_attribute("role") or "").casefold() == "combobox":
-                choice = _answer_for_choice_question(label_text, profile)
-                if choice is None or not _select_combobox_option(page, locator, choice):
+                choice, problem = choose_combobox_option(page, locator, label_text, profile)
+                answers[label_text] = choice
+                if problem:
                     manual_review = True
-                    answers[label_text] = None
-                    notes[label_text] = (
-                        "No configured answer for this choice question."
-                        if choice is None
-                        else f"Configured answer {choice!r} could not be selected."
-                    )
-                else:
-                    answers[label_text] = choice
+                    notes[label_text] = problem
                 continue
 
             tag = locator.evaluate("element => element.tagName.toLowerCase()")
             field_type = (locator.get_attribute("type") or "text").lower()
+            if tag == "select":
+                choice, problem = choose_select_option(locator, label_text, profile)
+                answers[label_text] = choice
+                if problem:
+                    manual_review = True
+                    notes[label_text] = problem
+                continue
             if tag not in {"input", "textarea"} or field_type not in {
                 "text", "email", "tel", "url", ""
             }:
                 manual_review = True
                 answers[label_text] = None
                 notes[label_text] = f"Unsupported control type ({tag}/{field_type})."
+                continue
+            if normalized in DATE_LABELS:
+                answers[label_text] = todays_date()
+                locator.fill(answers[label_text])
                 continue
             try:
                 decision = answer_custom_question(
@@ -326,6 +334,9 @@ def run_tier1_dry_run(
                 continue
             locator.fill(decision.answer)
             answers[label_text] = decision.answer
+
+        if choice_groups.apply(answers, notes):
+            manual_review = True
 
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot_path), full_page=True)

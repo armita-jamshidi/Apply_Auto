@@ -14,6 +14,13 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pypdf import PdfReader
 
 from agent.answers import answer_custom_question
+from agent.applier.choices import (
+    DATE_LABELS,
+    ChoiceGroups,
+    choose_combobox_option,
+    choose_select_option,
+    todays_date,
+)
 from agent.applier.confirmation import (
     UNKNOWN_OUTCOME_ERROR,
     confirmation_visible,
@@ -25,7 +32,6 @@ from agent.types import JobListing
 LOGGER = logging.getLogger(__name__)
 REQUIRED_MARKER = re.compile(r"\s*[*\u2731]+\s*$")
 CHOICE_KINDS = frozenset({"checkbox", "radio", "choice-group"})
-CHOICE_GROUP_NOTE = "Checkbox or radio choices are not automated; choose manually."
 NO_CONTROL_NOTE = "No form control is linked to this label (custom widget); answer manually."
 OTHER_UPLOAD_NOTE = "Skipped: file uploads other than the resume are not automated."
 # Reads a label's visible text (no nested options or hidden error text) and what it labels.
@@ -212,7 +218,7 @@ def run_greenhouse_dry_run(
             LOGGER.info("Resume upload failed or could not be verified for %s", job.url)
 
         labels = page.locator("#application-form label")
-        seen_groups: set[str] = set()
+        choice_groups = ChoiceGroups(profile)
         for index in range(labels.count()):
             info = inspect_label(labels.nth(index))
             label_text = info.text
@@ -230,12 +236,11 @@ def run_greenhouse_dry_run(
                 notes[label_text] = OTHER_UPLOAD_NOTE
                 continue
             if info.kind in CHOICE_KINDS:
-                group = info.group or label_text
-                if group not in seen_groups:
-                    seen_groups.add(group)
-                    manual_review = True
-                    answers[group] = None
-                    notes[group] = CHOICE_GROUP_NOTE
+                question = info.group or label_text
+                if info.kind == "choice-group":
+                    choice_groups.add(question)
+                else:
+                    choice_groups.add(question, label_text, labels.nth(index))
                 continue
             locator = find_labelled_control(page, label_text)
             if locator.count() != 1:
@@ -250,22 +255,22 @@ def run_greenhouse_dry_run(
 
             control_role = (locator.get_attribute("role") or "").casefold()
             if control_role == "combobox":
-                decision = _answer_for_choice_question(label_text, profile)
-                if decision is None:
+                choice, problem = choose_combobox_option(page, locator, label_text, profile)
+                answers[label_text] = choice
+                if problem:
                     manual_review = True
-                    answers[label_text] = None
-                    notes[label_text] = "No configured answer for this choice question."
-                    continue
-                if not _select_combobox_option(page, locator, decision):
-                    manual_review = True
-                    answers[label_text] = None
-                    notes[label_text] = f"Configured answer {decision!r} could not be selected."
-                    continue
-                answers[label_text] = decision
+                    notes[label_text] = problem
                 continue
 
             control_tag = locator.evaluate("element => element.tagName.toLowerCase()")
             control_type = (locator.get_attribute("type") or "text").lower()
+            if control_tag == "select":
+                choice, problem = choose_select_option(locator, label_text, profile)
+                answers[label_text] = choice
+                if problem:
+                    manual_review = True
+                    notes[label_text] = problem
+                continue
             if control_tag not in {"input", "textarea"} or control_type not in {
                 "text",
                 "email",
@@ -276,6 +281,10 @@ def run_greenhouse_dry_run(
                 manual_review = True
                 answers[label_text] = None
                 notes[label_text] = f"Unsupported control type ({control_tag}/{control_type})."
+                continue
+            if normalized in DATE_LABELS:
+                answers[label_text] = todays_date()
+                locator.fill(answers[label_text])
                 continue
 
             try:
@@ -315,6 +324,9 @@ def run_greenhouse_dry_run(
                 continue
             locator.fill(decision.answer)
             answers[label_text] = decision.answer
+
+        if choice_groups.apply(answers, notes):
+            manual_review = True
 
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot_path), full_page=True)
@@ -414,44 +426,6 @@ def _fill_label(page: Page, label: str, value: str | None, answers: dict[str, st
     locator.first.fill(value)
     answers[label] = value
     return True
-
-
-def _select_combobox_option(page: Page, combobox: Locator, answer: str) -> bool:
-    """Select and verify a visible ARIA combobox option by exact accessible name."""
-    try:
-        combobox.click()
-        option = page.get_by_role("option", name=answer, exact=True)
-        if option.count() != 1:
-            return False
-        option.click()
-        return (combobox.input_value() or "").strip().casefold() == answer.casefold()
-    except PlaywrightError:
-        return False
-
-
-def _answer_for_choice_question(question: str, profile: dict[str, object]) -> str | None:
-    """Return an explicitly configured Yes/No answer for an accessible choice control."""
-    normalized = _normalize_label(question)
-    if "ai policy for application" in normalized or (
-        re.search(r"\b(?:ai|artificial intelligence)\b", normalized)
-        and re.search(r"\b(?:policy|policies|guidelines?)\b", normalized)
-    ):
-        return "Yes"
-
-    has_prior_reference = bool(
-        re.search(r"\b(?:ever|before|previously|prior|in the past)\b", normalized)
-    )
-    if has_prior_reference and re.search(r"\binterview(?:ed|ing)?\b", normalized):
-        return "No"
-    if has_prior_reference and re.search(r"\b(?:applied|application)\b", normalized):
-        return "No"
-    if re.search(r"\b(?:meet|satisfy)\b", normalized) and re.search(
-        r"\b(?:qualifications?|requirements?|criteria)\b", normalized
-    ):
-        personal = profile.get("personal", {})
-        if isinstance(personal, dict) and personal.get("meets_job_requirements") is True:
-            return "Yes"
-    return None
 
 
 def _upload_resume(page: Page, resume_path: Path) -> bool:

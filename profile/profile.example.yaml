@@ -42,3 +42,20 @@ education:
   - institution: Example State University
     degree: Bachelor of Science in Computer Science
     graduation_date: 2021-05
+
+# Reused answers for choice questions (radio buttons, checkboxes, dropdowns).
+# Leave out anything you prefer to answer yourself; those questions stay for manual review.
+application_answers:
+  active_security_clearance: false
+  eligible_for_security_clearance: true
+  active_polygraph: false
+  ai_notetaker_consent: true
+  languages:
+    - English
+    - Spanish
+  # Voluntary self-identification. Use "decline" to pick a form's decline option.
+  eeo:
+    gender: decline
+    race_ethnicity: decline
+    veteran_status: "no"
+    disability_status: decline
