@@ -10,7 +10,7 @@ import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from agent.answers import AnswerDecision
-from agent.applier.base import DESCRIPTION_SELECTORS, run_tier1_dry_run
+from agent.applier.base import DESCRIPTION_SELECTORS, application_urls, run_tier1_dry_run
 from agent.types import JobListing
 
 
@@ -55,13 +55,20 @@ class FakePage:
         self.confirmation_text: str | None = "Application submitted!"
         self.click_error: Exception | None = None
         self.sections: dict[str, str] = {}
+        self.visited: list[str] = []
+        self.apply_links = [
+            "https://www.smartr.me/oneclick-ui/company/Sample/publication/elsewhere",
+            "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc",
+        ]
+        self.iframes: list[str] = []
 
     @property
     def first(self) -> "FakePage":
         return self
 
-    def goto(self, _url: str, *, wait_until: str) -> None:
+    def goto(self, url: str, *, wait_until: str) -> None:
         assert wait_until == "domcontentloaded"
+        self.visited.append(url)
 
     def wait_for_load_state(self, _state: str, *, timeout: int) -> None:
         assert timeout > 0
@@ -87,10 +94,21 @@ class FakePage:
                 count=lambda: len(labels),
                 nth=lambda index: SimpleNamespace(inner_text=lambda: labels[index]),
             )
-        if selector == "label":
+        if selector == "input, textarea, select":
+            return SimpleNamespace(count=lambda: len(self.fields))
+        if selector == "iframe":
             return SimpleNamespace(
-                count=lambda: len(self.fields),
-                nth=lambda index: SimpleNamespace(inner_text=lambda: list(self.fields)[index]),
+                count=lambda: len(self.iframes),
+                nth=lambda index: SimpleNamespace(
+                    get_attribute=lambda _name: self.iframes[index]
+                ),
+            )
+        if selector == 'a[href*="/oneclick-ui/"]':
+            return SimpleNamespace(
+                count=lambda: len(self.apply_links),
+                nth=lambda index: SimpleNamespace(
+                    get_attribute=lambda _name: self.apply_links[index]
+                ),
             )
         raise AssertionError(f"Unexpected selector: {selector}")
 
@@ -503,3 +521,171 @@ def test_tier1_records_notes_for_blank_and_skipped_fields(
         "Unsupported control type (input/checkbox)."
     )
     assert result.job_description == "Python role."
+
+
+@pytest.mark.parametrize(
+    ("platform", "url", "expected"),
+    [
+        (
+            "lever",
+            "https://jobs.lever.co/sample/job-1",
+            ("https://jobs.lever.co/sample/job-1", "https://jobs.lever.co/sample/job-1/apply"),
+        ),
+        (
+            "lever",
+            "https://jobs.lever.co/sample/job-1/apply?lever-source=board",
+            (
+                "https://jobs.lever.co/sample/job-1",
+                "https://jobs.lever.co/sample/job-1/apply?lever-source=board",
+            ),
+        ),
+        (
+            "ashby",
+            "https://jobs.ashbyhq.com/sample/job-1/",
+            (
+                "https://jobs.ashbyhq.com/sample/job-1/",
+                "https://jobs.ashbyhq.com/sample/job-1/application",
+            ),
+        ),
+        (
+            "ashby",
+            "https://jobs.ashbyhq.com/sample/job-1/application",
+            (
+                "https://jobs.ashbyhq.com/sample/job-1",
+                "https://jobs.ashbyhq.com/sample/job-1/application",
+            ),
+        ),
+        (
+            "smartrecruiters",
+            "https://jobs.smartrecruiters.com/Sample/1",
+            ("https://jobs.smartrecruiters.com/Sample/1", None),
+        ),
+        (
+            "smartrecruiters",
+            "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc",
+            (None, "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc"),
+        ),
+    ],
+)
+def test_application_urls_map_overview_and_form_pages(
+    platform: str, url: str, expected: tuple[str | None, str | None]
+) -> None:
+    assert application_urls(platform, url) == expected
+
+
+def test_tier1_with_stored_description_opens_only_the_form(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+
+    run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert page.visited == ["https://jobs.lever.co/sample/job-1/apply"]
+
+
+def test_tier1_reads_description_on_overview_then_opens_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contexts = capture_job_context(monkeypatch)
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.fields["Why do you want to work here?"] = FakeField("Why do you want to work here?")
+    page.sections[".posting-page .content"] = "Full posting with requirements."
+    job = replace(create_job("lever", "https://jobs.lever.co/sample/job-1/apply"), description="")
+
+    result = run_tier1_dry_run(
+        page, job, profile, resume, tmp_path / "filled.png", resume_text="Python engineer."
+    )
+
+    assert page.visited == [
+        "https://jobs.lever.co/sample/job-1",
+        "https://jobs.lever.co/sample/job-1/apply",
+    ]
+    assert result.job_description == "Full posting with requirements."
+    assert contexts[0]["description"] == "Full posting with requirements."
+
+
+def test_smartrecruiters_follows_same_host_apply_link(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+
+    run_tier1_dry_run(
+        page,
+        create_job("smartrecruiters", "https://jobs.smartrecruiters.com/Sample/1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert page.visited == [
+        "https://jobs.smartrecruiters.com/Sample/1",
+        "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc",
+    ]
+
+
+def test_smartrecruiters_without_apply_link_fails_clearly(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.apply_links = ["https://www.smartr.me/oneclick-ui/company/Sample/publication/x"]
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("smartrecruiters", "https://jobs.smartrecruiters.com/Sample/1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.status == "failed"
+    assert "application form link" in (result.error or "")
+
+
+def test_bot_challenge_stops_before_filling_and_routes_to_manual_review(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = FakePage([])
+    page.iframes = ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]
+
+    result = run_tier1_dry_run(
+        page,
+        create_job(
+            "smartrecruiters",
+            "https://jobs.smartrecruiters.com/oneclick-ui/company/Sample/publication/abc",
+        ),
+        profile,
+        resume,
+        tmp_path / "blocked.png",
+        resume_text="Python engineer.",
+        submit_live=True,
+    )
+
+    assert result.status == "manual_review"
+    assert result.submitted is False
+    assert result.answers == {}
+    assert "CAPTCHA" in result.field_notes["Application page"]
+    assert page.screenshot_path == str(tmp_path / "blocked.png")
+    assert page.submitted is False
+
+
+def test_unrelated_iframe_on_a_real_form_is_not_a_challenge(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.iframes = ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("lever", "https://jobs.lever.co/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    assert result.status == "dry_run_ready"

@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from agent.applier.ashby import run_ashby_application
+from agent.applier.base import application_urls
 from agent.applier.greenhouse import (
     ApplierResult,
     load_profile,
@@ -277,7 +278,11 @@ def main() -> int:
         except Exception as error:
             raise SystemExit(f"Live application blocked: {error}") from error
     else:
-        stored = _load_stored_job(args.job_url)
+        # Discovery stores overview pages, so look up /apply-style URLs by their overview.
+        lookup_url = args.job_url
+        if args.platform != "greenhouse":
+            lookup_url = application_urls(args.platform, args.job_url)[0] or args.job_url
+        stored = _load_stored_job(lookup_url)
         company = args.company or (stored.company if stored else "Unknown company")
         title = args.title or (stored.title if stored else "Unknown role")
         description = stored.description if stored else ""

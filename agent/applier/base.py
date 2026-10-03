@@ -3,6 +3,7 @@
 import logging
 import re
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from anthropic import Anthropic
 from playwright.sync_api import Locator, Page
@@ -51,10 +52,31 @@ PLATFORM_HOSTS = {
     "smartrecruiters": ("jobs.smartrecruiters.com",),
 }
 DESCRIPTION_SELECTORS = {
-    "lever": ('[data-qa="job-description"]', ".posting-page .content"),
+    "lever": (".posting-page .content", '[data-qa="job-description"]'),
     "ashby": ('[class*="descriptionText"]', "#overview"),
     "smartrecruiters": ('[itemprop="description"]', ".job-sections"),
 }
+# Discovery stores each posting's overview page; the form lives on a separate page.
+APPLICATION_SUFFIXES = {"lever": "/apply", "ashby": "/application"}
+SMARTRECRUITERS_FORM_PATH = "/oneclick-ui/"
+BOT_CHALLENGE_HOSTS = ("captcha-delivery.com", "challenges.cloudflare.com", "hcaptcha.com")
+
+
+def application_urls(platform: str, url: str) -> tuple[str | None, str | None]:
+    """Return (overview URL, form URL); None means unknown until the page is opened."""
+    parts = urlsplit(url)
+    if platform == "smartrecruiters":
+        if parts.path.startswith(SMARTRECRUITERS_FORM_PATH):
+            return None, url
+        return url, None
+    suffix = APPLICATION_SUFFIXES.get(platform)
+    if suffix is None:
+        return url, url
+    path = parts.path.rstrip("/")
+    if path.endswith(suffix):
+        overview = urlunsplit(parts._replace(path=path[: -len(suffix)], query="", fragment=""))
+        return overview, url
+    return url, urlunsplit(parts._replace(path=path + suffix))
 
 
 def run_tier1_dry_run(
@@ -95,16 +117,33 @@ def run_tier1_dry_run(
     submit_attempted = False
     confirmed = False
     try:
-        page.goto(job.url, wait_until="domcontentloaded")
-        try:
-            page.wait_for_load_state("networkidle", timeout=15000)
-        except PlaywrightTimeoutError:
-            LOGGER.info(
-                "%s page stayed active; continuing after bounded readiness wait", job.platform
+        selectors = DESCRIPTION_SELECTORS[job.platform]
+        overview_url, form_url = application_urls(job.platform, job.url)
+        if overview_url and (not job_description or form_url is None):
+            _open(page, overview_url, job.platform)
+            if not job_description:
+                job_description = read_page_description(page, selectors)
+            if form_url is None:
+                form_url = _find_smartrecruiters_form_url(page, supported_hosts)
+        if form_url is None:
+            raise RuntimeError("Could not find the application form link on the job page")
+        _open(page, form_url, job.platform)
+        if not job_description:
+            job_description = read_page_description(page, selectors)
+
+        challenge = _bot_challenge(page)
+        if challenge:
+            LOGGER.warning("%s form for %s is behind %s", job.platform, job.url, challenge)
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshot_path), full_page=True)
+            notes["Application page"] = (
+                f"Blocked by {challenge}; complete this application manually in a browser."
             )
-        job_description = job.description or read_page_description(
-            page, DESCRIPTION_SELECTORS[job.platform]
-        )
+            return ApplierResult(
+                "manual_review", answers, str(screenshot_path), None,
+                f"Application page is behind {challenge}.",
+                field_notes=notes, job_description=job_description,
+            )
 
         personal = profile.get("personal", {})
         if not isinstance(personal, dict):
@@ -290,6 +329,37 @@ def run_tier1_dry_run(
         field_notes=notes,
         job_description=job_description,
     )
+
+
+def _open(page: Page, url: str, platform: str) -> None:
+    page.goto(url, wait_until="domcontentloaded")
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeoutError:
+        LOGGER.info("%s page stayed active; continuing after bounded readiness wait", platform)
+
+
+def _find_smartrecruiters_form_url(page: Page, hosts: tuple[str, ...]) -> str | None:
+    """Return the first same-host one-click application link on a SmartRecruiters posting."""
+    links = page.locator(f'a[href*="{SMARTRECRUITERS_FORM_PATH}"]')
+    for index in range(links.count()):
+        href = links.nth(index).get_attribute("href") or ""
+        parts = urlsplit(href)
+        if parts.scheme == "https" and (parts.hostname or "").casefold() in hosts:
+            return href
+    return None
+
+
+def _bot_challenge(page: Page) -> str | None:
+    """Name a blocking bot challenge when the page shows one instead of a form."""
+    if page.locator("input, textarea, select").count():
+        return None
+    frames = page.locator("iframe")
+    for index in range(frames.count()):
+        src = (frames.nth(index).get_attribute("src") or "").casefold()
+        if any(host in src for host in BOT_CHALLENGE_HOSTS):
+            return "a bot-protection challenge (CAPTCHA)"
+    return None
 
 
 def _find_form(page: Page) -> Locator:

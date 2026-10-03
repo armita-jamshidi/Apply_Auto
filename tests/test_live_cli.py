@@ -109,3 +109,23 @@ def test_dry_run_continues_when_database_is_unavailable(tmp_path, monkeypatch) -
     monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{missing.as_posix()}")
 
     assert _load_stored_job(JOB_URL) is None
+
+
+def test_dry_run_looks_up_apply_url_by_stored_overview_url(monkeypatch) -> None:
+    import sys
+
+    from agent.applier import cli
+
+    looked_up: list[str] = []
+    monkeypatch.setattr(cli, "_load_stored_job", lambda url: looked_up.append(url))
+    monkeypatch.setattr(cli, "sync_playwright", lambda: (_ for _ in ()).throw(SystemExit(0)))
+    monkeypatch.setattr(
+        sys, "argv", ["job-apply", "--platform", "lever", "--job-url", f"{JOB_URL}/apply"]
+    )
+
+    try:
+        cli.main()
+    except SystemExit:
+        pass
+
+    assert looked_up == [JOB_URL]
