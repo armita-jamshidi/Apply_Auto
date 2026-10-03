@@ -10,6 +10,8 @@ network:
 discovery:
   # Keep early-career roles and roles that state no level; add mid or senior to widen.
   experience_levels: [early, unknown]
+  # Also search companies from the public SimplifyJobs New-Grad-Positions list.
+  include_new_grad_list: true
 safeguards:
   daily_application_cap: 5
   company_monthly_application_cap: 5

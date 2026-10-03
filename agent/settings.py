@@ -35,6 +35,7 @@ class AgentSettings:
     daily_application_cap: int
     company_monthly_application_cap: int
     experience_levels: tuple[str, ...] = ("early", "unknown")
+    include_new_grad_list: bool = True
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -82,6 +83,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         daily_application_cap=daily_application_cap,
         company_monthly_application_cap=company_monthly_application_cap,
         experience_levels=experience_levels,
+        include_new_grad_list=bool(discovery.get("include_new_grad_list", True)),
     )
 
 

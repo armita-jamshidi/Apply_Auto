@@ -1,6 +1,7 @@
 """Command-line entry point for Tier 1 ATS job discovery."""
 
 import argparse
+import functools
 import logging
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
 from agent.seniority import classify_experience
 from agent.settings import load_companies, load_settings
+from agent.sources.new_grad_list import fetch_new_grad_companies
 from db.models import Base
 from db.session import create_database_engine, create_session_factory
 
@@ -27,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--companies", type=Path, help="Path to companies.yaml")
     parser.add_argument("--settings", type=Path, help="Path to settings.yaml")
+    parser.add_argument(
+        "--no-new-grad-list",
+        action="store_true",
+        help="Only search configured companies, not the public new-grad list.",
+    )
     return parser
 
 
@@ -36,6 +43,11 @@ def main() -> int:
     args = build_parser().parse_args()
     settings = load_settings(args.settings)
     companies = load_companies(args.companies)
+    if settings.include_new_grad_list and not args.no_new_grad_list:
+        try:
+            companies += fetch_new_grad_companies(exclude=companies)
+        except Exception:
+            LOGGER.exception("Could not load the new-grad list; using configured companies")
     if not companies:
         LOGGER.info(
             "No companies configured; add ATS boards to config/companies.yaml."
@@ -62,6 +74,11 @@ def main() -> int:
                         company.platform,
                     )
                     continue
+                if company.platform == "smartrecruiters":
+                    fetcher = functools.partial(
+                        fetcher,
+                        include=functools.partial(_worth_describing, settings=settings),
+                    )
                 try:
                     listings = fetcher(
                         company.board or "",
@@ -111,6 +128,17 @@ def main() -> int:
     if dashboard is not None:
         print(f"Dashboard: {dashboard}")
     return 0
+
+
+def _worth_describing(listing, *, settings) -> bool:
+    """Cheap location and title checks before fetching a posting's description."""
+    category = normalize_location(
+        listing.location_raw, include_hybrid_nc=settings.include_hybrid_nc
+    )
+    if category == "other" and not is_ambiguous_location(listing.location_raw):
+        return False
+    level = classify_experience(listing.title).level
+    return level in settings.experience_levels or level == "unknown"
 
 
 if __name__ == "__main__":

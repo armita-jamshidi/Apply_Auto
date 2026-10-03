@@ -96,3 +96,39 @@ def test_discovery_keeps_only_early_career_and_unstated_levels(
     assert "Support Engineer | Lever Example | unknown" in output
     assert "Senior Software Engineer" not in output
     assert "Platform Engineer" not in output
+
+
+def test_discovery_adds_new_grad_list_companies_unless_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.settings import CompanyConfig
+
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        f"database_url: 'sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}'\n",
+        encoding="utf-8",
+    )
+    companies = tmp_path / "companies.yaml"
+    companies.write_text(
+        "companies:\n  - name: Lever Example\n    platform: lever\n    board: lever-example\n",
+        encoding="utf-8",
+    )
+    fetched: list[str] = []
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr("agent.settings.load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        discovery,
+        "fetch_new_grad_companies",
+        lambda **_kwargs: [CompanyConfig("Listed Co", "lever", "listed-co", None)],
+    )
+    monkeypatch.setattr(
+        discovery, "fetch_lever_jobs", lambda board, *_args, **_kwargs: fetched.append(board) or []
+    )
+    base_args = ["job-agent", "--settings", str(settings), "--companies", str(companies)]
+
+    monkeypatch.setattr(sys, "argv", base_args)
+    discovery.main()
+    monkeypatch.setattr(sys, "argv", [*base_args, "--no-new-grad-list"])
+    discovery.main()
+
+    assert fetched == ["lever-example", "listed-co", "lever-example"]

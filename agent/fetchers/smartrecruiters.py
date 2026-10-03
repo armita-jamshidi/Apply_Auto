@@ -1,6 +1,7 @@
 """Fetcher for SmartRecruiters' public postings API."""
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
@@ -21,8 +22,13 @@ def fetch_smartrecruiters_jobs(
     client: httpx.Client | None = None,
     max_retries: int = 3,
     backoff_seconds: float = 0.5,
+    include: Callable[[JobListing], bool] | None = None,
 ) -> list[JobListing]:
-    """Fetch public SmartRecruiters postings, following API pagination."""
+    """Fetch public SmartRecruiters postings, following API pagination.
+
+    Each posting needs a second request for its description, so ``include`` (given the
+    listing without a description) can skip postings early.
+    """
     if not company_id.strip():
         raise ValueError("SmartRecruiters company id cannot be empty")
     owns_client = client is None
@@ -51,6 +57,20 @@ def fetch_smartrecruiters_jobs(
                         if location.get(key)
                     ]
                     posting_id = str(item["id"]).strip()
+                    listing = JobListing(
+                        source="smartrecruiters",
+                        platform="smartrecruiters",
+                        company=company,
+                        title=str(item["name"]).strip(),
+                        url=(
+                            "https://jobs.smartrecruiters.com/"
+                            f"{company_id.strip()}/{quote(posting_id, safe='')}"
+                        ),
+                        location_raw=", ".join(location_parts),
+                        description="",
+                    )
+                    if include is not None and not include(listing):
+                        continue
                     description = _fetch_description(
                         http,
                         company_id.strip(),
@@ -60,15 +80,12 @@ def fetch_smartrecruiters_jobs(
                     )
                     jobs.append(
                         JobListing(
-                            source="smartrecruiters",
-                            platform="smartrecruiters",
-                            company=company,
-                            title=str(item["name"]).strip(),
-                            url=(
-                                "https://jobs.smartrecruiters.com/"
-                                f"{company_id.strip()}/{quote(posting_id, safe='')}"
-                            ),
-                            location_raw=", ".join(location_parts),
+                            source=listing.source,
+                            platform=listing.platform,
+                            company=listing.company,
+                            title=listing.title,
+                            url=listing.url,
+                            location_raw=listing.location_raw,
                             description=description,
                         )
                     )

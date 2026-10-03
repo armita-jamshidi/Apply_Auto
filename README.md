@@ -80,6 +80,8 @@ Requires Python 3.11+, Docker Compose, and Git. GitHub Actions runs Ruff and pyt
    job-agent
    ```
 
+   Discovery searches your configured companies plus every company with a Greenhouse, Lever, Ashby, or SmartRecruiters board on the public, community-maintained [SimplifyJobs New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions) list (`--no-new-grad-list` or `discovery.include_new_grad_list: false` turns that off). Each company's whole board is fetched through its public API, so roles not on the list are found too. Each job is labelled early career, mid, senior, or not stated from its title and the years of experience it requires; by default only early-career and not-stated roles are kept (`discovery.experience_levels` in `config/settings.yaml`).
+
    The CLI prints newly found and previously known in-scope listings. It continues to other companies if one board request fails. `DATABASE_URL` from `.env` overrides `config/settings.yaml`.
 
 Install the privacy guard once per clone. It is a git pre-commit hook that blocks any commit staging private files (profile, resumes, `.env`, databases, screenshots, review pages, the dashboard, browser profiles) or added lines containing identifying values from your local profile (name, email, phone, profile links, location, employers, schools, start date, resume file name). It reads those values locally and reports only categories:

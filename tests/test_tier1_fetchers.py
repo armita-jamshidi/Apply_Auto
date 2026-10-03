@@ -162,3 +162,31 @@ def test_fetchers_retry_transient_http_errors() -> None:
 
     assert jobs == []
     assert calls == 2
+
+
+def test_smartrecruiters_include_skips_description_requests() -> None:
+    detail_requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/postings"):
+            return httpx.Response(
+                200,
+                json={
+                    "content": [
+                        {"id": "1", "name": "Graduate Engineer", "location": {"country": "us"}},
+                        {"id": "2", "name": "Senior Engineer", "location": {"country": "us"}},
+                    ]
+                },
+            )
+        detail_requests.append(request.url.path)
+        return httpx.Response(200, json={"jobAd": {"sections": {"a": {"text": "Build."}}}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    jobs = fetch_smartrecruiters_jobs(
+        "Example", "Example Co", client=client, include=lambda job: "Senior" not in job.title
+    )
+    client.close()
+
+    assert [job.title for job in jobs] == ["Graduate Engineer"]
+    assert jobs[0].description == "Build."
+    assert detail_requests == ["/v1/companies/Example/postings/1"]
