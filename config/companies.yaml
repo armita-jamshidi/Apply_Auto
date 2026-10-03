@@ -1,6 +1,6 @@
 # companies.yaml
 # Board names are best guesses; run the verify script before relying on them.
-# platform: greenhouse | lever | ashby | career_page
+# platform: greenhouse | lever | ashby | smartrecruiters | career_page
 
 companies:
   # AI labs and AI infrastructure
@@ -45,13 +45,13 @@ companies:
     platform: greenhouse
     board: flatironhealth
   - name: Hinge Health
-    platform: greenhouse
-    board: hingehealth
+    platform: ashby
+    board: hinge-health
   - name: Oscar Health
     platform: greenhouse
     board: oscar
   - name: Headway
-    platform: greenhouse
+    platform: ashby
     board: headway
   - name: Oura
     platform: greenhouse
@@ -88,11 +88,14 @@ companies:
     platform: lever
     board: palantir
   - name: Plaid
-    platform: lever
+    platform: ashby
     board: plaid
   - name: Spotify
     platform: lever
     board: spotify
+  - name: Experian
+    platform: smartrecruiters
+    board: Experian
 
   # North Carolina (Research Triangle)
   - name: Epic Games
