@@ -12,30 +12,68 @@ discovery:
   experience_levels: [early, unknown]
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
-  # Keep only titles containing one of these words. Remove the list to keep every role.
+  # Never keep internships, co-ops, or new-grad roles (matched in titles), or postings that
+  # say they are for new graduates (matched in descriptions). Set a list to [] to allow them.
+  exclude_title_keywords:
+    - intern
+    - interns
+    - internship
+    - internships
+    - co-op
+    - co-ops
+    - coop
+    - co op
+    - new grad
+    - new grads
+    - new-grad
+    - new graduate
+    - new graduates
+    - recent grad
+    - recent graduate
+    - university grad
+    - university graduate
+  exclude_description_phrases:
+    - new grad
+    - new grads
+    - new-grad
+    - new graduate
+    - new graduates
+    - new college grad
+    - new college graduate
+  # Keep only AI and agent engineering roles: a title must contain one of title_keywords
+  # (the AI side) and one of title_role_keywords (the engineering side), for example
+  # "AI Engineer", "Agent Engineer", "Machine Learning Engineer", or "Forward Deployed
+  # Engineer, Agentic Platform". Remove a list to drop that requirement.
   title_keywords:
-    - engineer
-    - engineering
-    - developer
-    - software
-    - swe
-    - data
+    - ai
+    - a.i.
+    - artificial intelligence
+    - agent
+    - agents
+    - agentic
+    - llm
+    - llms
+    - genai
+    - gen ai
+    - generative ai
     - machine learning
     - ml
-    - ai
-    - analyst
+    - ai/ml
+    - ml/ai
+    - deep learning
+    - nlp
+    - applied ai
+    - conversational ai
+  title_role_keywords:
+    - engineer
+    - engineers
+    - engineering
+    - developer
+    - swe
     - scientist
-    - research
-    - full stack
-    - fullstack
-    - backend
-    - frontend
-    - platform
-    - infrastructure
-    - security
-    - forward deployed
-    - solutions engineer
-    - technical
+    - researcher
+    - research engineer
+    - architect
 safeguards:
   daily_application_cap: 5
   company_monthly_application_cap: 5

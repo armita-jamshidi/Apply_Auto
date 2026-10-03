@@ -9,7 +9,7 @@ import httpx
 
 from agent.types import JobListing
 
-from .http import request_json
+from .http import label_remote, request_json
 
 LOGGER = logging.getLogger(__name__)
 SMARTRECRUITERS_POSTINGS_URL = "https://api.smartrecruiters.com/v1/companies/{company_id}/postings"
@@ -66,7 +66,9 @@ def fetch_smartrecruiters_jobs(
                             "https://jobs.smartrecruiters.com/"
                             f"{company_id.strip()}/{quote(posting_id, safe='')}"
                         ),
-                        location_raw=", ".join(location_parts),
+                        location_raw=label_remote(
+                            ", ".join(location_parts), location.get("remote") is True
+                        ),
                         description="",
                     )
                     if include is not None and not include(listing):

@@ -77,7 +77,11 @@ def test_discovery_keeps_only_early_career_and_unstated_levels(
         )
 
     listings = [
+        listing("Junior Software Engineer"),
         listing("Software Engineer, New Grad"),
+        listing("Software Engineering Intern"),
+        listing("Software Engineer Co-op"),
+        listing("Software Engineer", "Open to new graduates of 2026."),
         listing("Senior Software Engineer"),
         listing("Platform Engineer", "Requires 6+ years of experience."),
         listing("Support Engineer"),
@@ -92,7 +96,11 @@ def test_discovery_keeps_only_early_career_and_unstated_levels(
     assert discovery.main() == 0
 
     output = capsys.readouterr().out
-    assert "Software Engineer, New Grad | Lever Example | early" in output
+    assert "Junior Software Engineer | Lever Example | early" in output
+    assert "New Grad" not in output
+    assert "Intern" not in output
+    assert "Co-op" not in output
+    assert "[new] Software Engineer | Lever Example" not in output
     assert "Support Engineer | Lever Example | unknown" in output
     assert "Senior Software Engineer" not in output
     assert "Platform Engineer" not in output
@@ -153,7 +161,7 @@ def test_discovery_survives_emoji_titles_and_filters_by_title_keywords(
     listings = [
         JobListing("lever", "lever", "Lever Example", f"{title}", f"https://jobs.lever.co/x/{i}",
                    "Remote - United States", "")
-        for i, title in enumerate(["\U0001f525 New Grad Engineer", "Account Executive"])
+        for i, title in enumerate(["\U0001f525 Junior Engineer", "Account Executive"])
     ]
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr("agent.settings.load_dotenv", lambda *_args, **_kwargs: None)
@@ -165,5 +173,5 @@ def test_discovery_survives_emoji_titles_and_filters_by_title_keywords(
     assert discovery.main() == 0
 
     output = capsys.readouterr().out
-    assert "New Grad Engineer" in output
+    assert "Junior Engineer" in output
     assert "Account Executive" not in output

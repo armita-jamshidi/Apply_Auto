@@ -23,6 +23,18 @@ class CompanyConfig:
     url: str | None
 
 
+# Roles the candidate does not qualify for: internships, co-ops, and new-grad programs.
+DEFAULT_EXCLUDED_TITLES = (
+    "intern", "interns", "internship", "internships", "co-op", "co-ops", "coop", "co op",
+    "new grad", "new grads", "new-grad", "new graduate", "new graduates", "recent grad",
+    "recent graduate", "university grad", "university graduate",
+)
+DEFAULT_EXCLUDED_DESCRIPTION_PHRASES = (
+    "new grad", "new grads", "new-grad", "new graduate", "new graduates",
+    "new college grad", "new college graduate",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class AgentSettings:
     """Runtime settings for job discovery and fit scoring."""
@@ -38,6 +50,9 @@ class AgentSettings:
     experience_levels: tuple[str, ...] = ("early", "unknown")
     include_new_grad_list: bool = True
     title_keywords: tuple[str, ...] = ()
+    title_role_keywords: tuple[str, ...] = ()
+    exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
+    exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -91,7 +106,41 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
             for keyword in discovery.get("title_keywords") or []
             if str(keyword).strip()
         ),
+        title_role_keywords=_keywords(discovery.get("title_role_keywords"), ()),
+        exclude_title_keywords=_keywords(
+            discovery.get("exclude_title_keywords"), DEFAULT_EXCLUDED_TITLES
+        ),
+        exclude_description_phrases=_keywords(
+            discovery.get("exclude_description_phrases"), DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
+        ),
     )
+
+
+def _keywords(configured: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if configured is None:
+        return default
+    return tuple(str(item).strip().casefold() for item in configured if str(item).strip())
+
+
+def title_in_scope(title: str, settings: AgentSettings) -> bool:
+    """Whether a title names a wanted field (title_keywords) and kind of role (role keywords)."""
+    return title_matches(title, settings.title_keywords) and title_matches(
+        title, settings.title_role_keywords
+    )
+
+
+def excluded_role_reason(title: str, description: str, settings: AgentSettings) -> str | None:
+    """Why a role is one the candidate has ruled out (intern, co-op, new grad), else None."""
+    if settings.exclude_title_keywords and title_matches(
+        title, settings.exclude_title_keywords
+    ):
+        return "Internship, co-op, or new-grad role (excluded in settings)"
+    text = " ".join(re.sub(r"<[^>]+>", " ", description).split())
+    if settings.exclude_description_phrases and title_matches(
+        text, settings.exclude_description_phrases
+    ):
+        return "Posting is for new graduates (excluded in settings)"
+    return None
 
 
 def title_matches(title: str, keywords: tuple[str, ...]) -> bool:

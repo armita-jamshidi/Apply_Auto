@@ -15,10 +15,14 @@ from agent.fetchers.lever import fetch_lever_jobs
 from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
 from agent.seniority import classify_experience
-from agent.settings import load_companies, load_settings, title_matches
+from agent.settings import (
+    excluded_role_reason,
+    load_companies,
+    load_settings,
+    title_in_scope,
+)
 from agent.sources.new_grad_list import fetch_new_grad_companies
-from db.models import Base
-from db.session import create_database_engine, create_session_factory
+from db.session import create_database_engine, create_session_factory, ensure_schema
 
 LOGGER = logging.getLogger("job_agent")
 
@@ -35,17 +39,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only search configured companies, not the public new-grad list.",
     )
+    parser.add_argument("--no-dashboard", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Fetch configured boards, persist in-scope jobs, and print each result."""
     # Job titles can contain emoji; never let the Windows console encoding crash discovery.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    args = build_parser().parse_args()
+    args = build_parser().parse_args(argv)
     settings = load_settings(args.settings)
     companies = load_companies(args.companies)
     if settings.include_new_grad_list and not args.no_new_grad_list:
@@ -60,7 +65,7 @@ def main() -> int:
         return 0
 
     engine = create_database_engine(settings.database_url)
-    Base.metadata.create_all(engine)
+    ensure_schema(engine)
     session_factory = create_session_factory(engine)
     found_count = 0
     try:
@@ -106,7 +111,9 @@ def main() -> int:
                     ambiguous = is_ambiguous_location(listing.location_raw)
                     if category == "other" and not ambiguous:
                         continue
-                    if not title_matches(listing.title, settings.title_keywords):
+                    if not title_in_scope(listing.title, settings):
+                        continue
+                    if excluded_role_reason(listing.title, listing.description, settings):
                         continue
                     level = classify_experience(listing.title, listing.description).level
                     if level not in settings.experience_levels:
@@ -131,9 +138,10 @@ def main() -> int:
         engine.dispose()
 
     LOGGER.info("Finished discovery; printed %d in-scope listings.", found_count)
-    dashboard = refresh_dashboard()
-    if dashboard is not None:
-        print(f"Dashboard: {dashboard}")
+    if not args.no_dashboard:
+        dashboard = refresh_dashboard()
+        if dashboard is not None:
+            print(f"Dashboard: {dashboard}")
     return 0
 
 
@@ -144,7 +152,9 @@ def _worth_describing(listing, *, settings) -> bool:
     )
     if category == "other" and not is_ambiguous_location(listing.location_raw):
         return False
-    if not title_matches(listing.title, settings.title_keywords):
+    if not title_in_scope(listing.title, settings):
+        return False
+    if excluded_role_reason(listing.title, "", settings):
         return False
     level = classify_experience(listing.title).level
     return level in settings.experience_levels or level == "unknown"

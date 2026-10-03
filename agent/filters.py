@@ -88,7 +88,18 @@ def _is_us_wide_remote(text: str) -> bool:
 
 
 def is_ambiguous_location(location: str) -> bool:
-    """Return whether a location label is too vague for automatic decisions."""
+    """Return whether a location label is too vague for automatic decisions.
+
+    A bare country label ("United States") without "remote" could be on-site anywhere.
+    """
+    country_only = re.sub(
+        r"\b(?:u\.?s\.?a?\.?|united states(?: of america)?)(?!\w)|[^\w]+",
+        "",
+        location,
+        flags=re.IGNORECASE,
+    )
+    if location.strip() and not country_only:
+        return True
     return bool(
         re.search(
             r"\b(?:multiple|various) locations\b|\blocation(?:s)?\s+(?:are\s+)?flexible\b|"
@@ -172,13 +183,13 @@ def normalize_location(location: str, *, include_hybrid_nc: bool = True) -> Loca
     if not text:
         return "other"
 
-    remote = bool(re.search(r"\bremote\b", text, flags=re.IGNORECASE))
+    remote = bool(re.search(r"\b(?:remote|anywhere)\b", text, flags=re.IGNORECASE))
     hybrid = bool(re.search(r"\bhybrid\b", text, flags=re.IGNORECASE))
     is_nc = _contains_nc(text)
 
     if hybrid:
         return "nc" if include_hybrid_nc and is_nc else "other"
-    if remote or _is_us_wide_remote(text):
+    if remote:
         if _contains_other_remote_restriction(text):
             return "other"
         if is_nc:

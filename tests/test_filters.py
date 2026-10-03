@@ -20,7 +20,7 @@ from db.models import Base, Job
     [
         ("Remote - US", "remote_us"),
         ("Remote, United States", "remote_us"),
-        ("United States", "remote_us"),
+        ("United States", "other"),
         ("Anywhere in the US", "remote_us"),
         ("Remote - United States of America", "remote_us"),
         ("Remote - California", "other"),
@@ -52,7 +52,9 @@ def test_remote_us_north_carolina_is_in_scope() -> None:
     assert normalize_location("Remote - US, North Carolina") == "nc"
 
 
-@pytest.mark.parametrize("location", ["Multiple locations", "Flexible", "Location flexible"])
+@pytest.mark.parametrize(
+    "location", ["Multiple locations", "Flexible", "Location flexible", "United States", "USA"]
+)
 def test_vague_location_is_marked_for_manual_review(location: str) -> None:
     assert is_ambiguous_location(location)
 
@@ -151,3 +153,26 @@ def test_persist_job_stores_experience_level() -> None:
         job = session.scalar(select(Job).where(Job.url == listing.url))
         assert (job.experience_level, job.min_years_experience) == ("early", 1)
     engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Remote - United States",
+        "Raleigh, NC, United States",
+        "Mountain View, California, United States",
+        "US-CA-Menlo Park",
+        "United States and Canada",
+    ],
+)
+def test_remote_or_nc_country_labels_are_not_ambiguous(location: str) -> None:
+    assert not is_ambiguous_location(location)
+
+
+def test_board_remote_flag_labels_the_location() -> None:
+    from agent.fetchers.http import label_remote
+
+    assert label_remote("United States", True) == "Remote - United States"
+    assert label_remote("Remote - US", True) == "Remote - US"
+    assert label_remote("United States", False) == "United States"
+    assert normalize_location(label_remote("United States", True)) == "remote_us"

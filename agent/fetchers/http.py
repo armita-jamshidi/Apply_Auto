@@ -38,3 +38,11 @@ def request_json(
             LOGGER.warning("ATS request failed; retrying in %.1fs: %s", delay, error)
             time.sleep(delay)
     raise RuntimeError("ATS retry loop ended unexpectedly")
+
+
+def label_remote(location: str, is_remote: bool) -> str:
+    """Prefix "Remote - " when the board flags a job remote but its label does not say so."""
+    location = " ".join(str(location).split())
+    if not is_remote or "remote" in location.casefold():
+        return location
+    return f"Remote - {location}" if location else "Remote"
