@@ -86,7 +86,7 @@ def write_dashboard(session: Session, path: Path | None = None) -> list[Dashboar
         for key, label, _ in GROUPS
     )
     body = "\n".join(_row_html(row) for row in rows) or (
-        "<tr><td colspan='7' class='muted'>No jobs yet. Run discovery: "
+        "<tr><td colspan='8' class='muted'>No jobs yet. Run discovery: "
         "<code>python -m agent.main</code></td></tr>"
     )
     generated = datetime.now(LOCAL_TIMEZONE).strftime("%b %d, %Y %I:%M %p")
@@ -169,7 +169,8 @@ pre {{
 </div>
 <div class="panel table-wrap">
 <table>
-<thead><tr><th>Status</th><th>Company</th><th>Role</th><th>Location</th><th>Fit</th>
+<thead><tr><th>Status</th><th>Company</th><th>Role</th><th>Level</th><th>Location</th>
+<th>Fit</th>
 <th>Last activity</th><th>Next step</th></tr></thead>
 <tbody id="jobs">
 {body}
@@ -259,12 +260,21 @@ def _row_html(row: DashboardRow) -> str:
         f"<td><span class='pill {row.group}'>{escape(row.label)}</span></td>"
         f"<td>{escape(job.company)}</td>"
         f"<td>{escape(job.title)}{warning}</td>"
+        f"<td>{escape(_level(job))}</td>"
         f"<td>{escape(job.location_raw or '')}</td>"
         f"<td>{escape(fit)}</td>"
         f"<td>{escape(activity)} {escape(_format_date(when))}</td>"
         f"<td class='links'>{''.join(links)}{finish}</td>"
         "</tr>"
     )
+
+
+def _level(job: Job) -> str:
+    labels = {"early": "Early career", "mid": "Mid", "senior": "Senior", "unknown": "Not stated"}
+    label = labels.get(job.experience_level or "", "")
+    if job.min_years_experience is not None and label:
+        label += f" ({job.min_years_experience}+ yrs)"
+    return label
 
 
 def _format_date(value: datetime | None) -> str:

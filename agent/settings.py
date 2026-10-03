@@ -34,6 +34,7 @@ class AgentSettings:
     anthropic_model: str
     daily_application_cap: int
     company_monthly_application_cap: int
+    experience_levels: tuple[str, ...] = ("early", "unknown")
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -63,6 +64,14 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         raise ValueError("fit_score_threshold must be between 0 and 100")
     if daily_application_cap < 1 or company_monthly_application_cap < 1:
         raise ValueError("application caps must be at least 1")
+    discovery = raw.get("discovery", {}) or {}
+    experience_levels = tuple(
+        str(level).strip().lower()
+        for level in discovery.get("experience_levels", ["early", "unknown"])
+    )
+    unknown_levels = set(experience_levels) - {"early", "mid", "senior", "unknown"}
+    if unknown_levels or not experience_levels:
+        raise ValueError("discovery.experience_levels must use early, mid, senior, or unknown")
     return AgentSettings(
         database_url=resolve_database_url(database_url),
         include_hybrid_nc=bool(location.get("include_hybrid_nc", True)),
@@ -72,6 +81,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         anthropic_model=anthropic_model,
         daily_application_cap=daily_application_cap,
         company_monthly_application_cap=company_monthly_application_cap,
+        experience_levels=experience_levels,
     )
 
 

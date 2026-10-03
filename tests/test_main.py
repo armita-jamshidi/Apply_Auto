@@ -45,3 +45,54 @@ def test_fetch_failure_log_names_the_platform(
 
     assert "Could not fetch lever board for Lever Example" in caplog.text
     assert "Greenhouse" not in caplog.text
+
+
+def test_discovery_keeps_only_early_career_and_unstated_levels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent.types import JobListing
+
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        f"database_url: 'sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}'\n",
+        encoding="utf-8",
+    )
+    companies = tmp_path / "companies.yaml"
+    companies.write_text(
+        "companies:\n  - name: Lever Example\n    platform: lever\n    board: lever-example\n",
+        encoding="utf-8",
+    )
+
+    def listing(title: str, description: str = "") -> JobListing:
+        return JobListing(
+            source="lever",
+            platform="lever",
+            company="Lever Example",
+            title=title,
+            url=f"https://jobs.lever.co/example/{title.replace(' ', '-').lower()}",
+            location_raw="Remote - United States",
+            description=description,
+        )
+
+    listings = [
+        listing("Software Engineer, New Grad"),
+        listing("Senior Software Engineer"),
+        listing("Platform Engineer", "Requires 6+ years of experience."),
+        listing("Support Engineer"),
+    ]
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr("agent.settings.load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sys, "argv", ["job-agent", "--settings", str(settings), "--companies", str(companies)]
+    )
+    monkeypatch.setattr(discovery, "fetch_lever_jobs", lambda *_args, **_kwargs: listings)
+
+    assert discovery.main() == 0
+
+    output = capsys.readouterr().out
+    assert "Software Engineer, New Grad | Lever Example | early" in output
+    assert "Support Engineer | Lever Example | unknown" in output
+    assert "Senior Software Engineer" not in output
+    assert "Platform Engineer" not in output

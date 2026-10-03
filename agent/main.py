@@ -12,6 +12,7 @@ from agent.fetchers.greenhouse import fetch_greenhouse_jobs
 from agent.fetchers.lever import fetch_lever_jobs
 from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
+from agent.seniority import classify_experience
 from agent.settings import load_companies, load_settings
 from db.models import Base
 from db.session import create_database_engine, create_session_factory
@@ -83,6 +84,9 @@ def main() -> int:
                     ambiguous = is_ambiguous_location(listing.location_raw)
                     if category == "other" and not ambiguous:
                         continue
+                    level = classify_experience(listing.title, listing.description).level
+                    if level not in settings.experience_levels:
+                        continue
                     status = "queued" if ambiguous else "new"
                     try:
                         is_new = persist_job_if_new(session, listing, category, status=status)
@@ -96,7 +100,7 @@ def main() -> int:
                     if ambiguous:
                         marker = "manual review" if is_new else "manual review, already known"
                     print(
-                        f"[{marker}] {listing.title} | {listing.company} | "
+                        f"[{marker}] {listing.title} | {listing.company} | {level} | "
                         f"{category} | {listing.location_raw} | {listing.url}"
                     )
     finally:

@@ -5,6 +5,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from agent.seniority import classify_experience
 from db.models import Job
 
 from .types import JobListing, LocationCategory
@@ -197,6 +198,7 @@ def persist_job_if_new(
     exists = session.scalar(select(Job.id).where(Job.url == listing.url))
     if exists is not None:
         return False
+    experience = classify_experience(listing.title, listing.description)
 
     session.add(
         Job(
@@ -209,6 +211,8 @@ def persist_job_if_new(
             location_category=location_category,
             description=listing.description,
             status=status,
+            experience_level=experience.level,
+            min_years_experience=experience.min_years,
         )
     )
     session.flush()

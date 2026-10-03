@@ -131,3 +131,23 @@ def test_language_dealbreakers_only_for_required_unspoken_languages(
     description: str, expected: list[str]
 ) -> None:
     assert find_language_dealbreakers(description, ["English", "Farsi/Persian"]) == expected
+
+
+def test_persist_job_stores_experience_level() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    listing = JobListing(
+        source="greenhouse",
+        platform="greenhouse",
+        company="Example",
+        title="Software Engineer",
+        url="https://boards.greenhouse.io/example/jobs/9",
+        location_raw="Remote - US",
+        description="&lt;li&gt;1+ years of professional experience with Python&lt;/li&gt;",
+    )
+
+    with Session(engine) as session:
+        persist_job_if_new(session, listing, "remote_us")
+        job = session.scalar(select(Job).where(Job.url == listing.url))
+        assert (job.experience_level, job.min_years_experience) == ("early", 1)
+    engine.dispose()

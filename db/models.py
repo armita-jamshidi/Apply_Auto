@@ -34,6 +34,8 @@ class Job(Base):
     fit_score: Mapped[int | None] = mapped_column(Integer)
     fit_reasons: Mapped[list[str] | None] = mapped_column(JSON)
     dealbreakers: Mapped[list[str] | None] = mapped_column(JSON)
+    experience_level: Mapped[str | None] = mapped_column(String(20))
+    min_years_experience: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

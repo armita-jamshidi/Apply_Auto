@@ -61,3 +61,26 @@ def test_non_file_database_urls_are_unchanged() -> None:
     postgres = "postgresql+psycopg://user:pw@localhost:5432/jobs"
     assert resolve_database_url(postgres) == postgres
     assert resolve_database_url("sqlite+pysqlite:///:memory:") == "sqlite+pysqlite:///:memory:"
+
+
+def test_discovery_experience_levels_default_and_validation(tmp_path: Path) -> None:
+    import pytest
+
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text("database_url: 'sqlite+pysqlite:///:memory:'\n", encoding="utf-8")
+    assert load_settings(settings_path, load_env=False).experience_levels == ("early", "unknown")
+
+    settings_path.write_text(
+        "database_url: 'sqlite+pysqlite:///:memory:'\n"
+        "discovery:\n  experience_levels: [Early, MID]\n",
+        encoding="utf-8",
+    )
+    assert load_settings(settings_path, load_env=False).experience_levels == ("early", "mid")
+
+    settings_path.write_text(
+        "database_url: 'sqlite+pysqlite:///:memory:'\n"
+        "discovery:\n  experience_levels: [junior]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="experience_levels"):
+        load_settings(settings_path, load_env=False)

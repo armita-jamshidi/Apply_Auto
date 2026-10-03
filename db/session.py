@@ -1,6 +1,6 @@
 """Database engine and session construction."""
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -17,10 +17,24 @@ def create_database_engine(database_url: str) -> Engine:
 
 
 def ensure_schema(engine: Engine) -> None:
-    """Create any missing tables (a fresh local SQLite file needs this; Postgres uses Alembic)."""
+    """Create missing tables and add missing optional columns to existing ones.
+
+    A local SQLite file has no Alembic history, so later nullable columns are added here.
+    """
     from db.models import Base
 
     Base.metadata.create_all(engine)
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            existing = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing or not column.nullable:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                connection.execute(
+                    text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}')
+                )
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

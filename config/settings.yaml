@@ -7,6 +7,9 @@ location:
 network:
   max_retries: 3
   backoff_seconds: 0.5
+discovery:
+  # Keep early-career roles and roles that state no level; add mid or senior to widen.
+  experience_levels: [early, unknown]
 safeguards:
   daily_application_cap: 5
   company_monthly_application_cap: 5
