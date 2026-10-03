@@ -84,3 +84,23 @@ def test_discovery_experience_levels_default_and_validation(tmp_path: Path) -> N
     )
     with pytest.raises(ValueError, match="experience_levels"):
         load_settings(settings_path, load_env=False)
+
+
+def test_title_keywords_filter_roles_by_whole_words(tmp_path: Path) -> None:
+    from agent.settings import title_matches
+
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text(
+        "database_url: 'sqlite+pysqlite:///:memory:'\n"
+        "discovery:\n  title_keywords: [Engineer, AI, machine learning]\n",
+        encoding="utf-8",
+    )
+    keywords = load_settings(settings_path, load_env=False).title_keywords
+
+    assert keywords == ("engineer", "ai", "machine learning")
+    assert title_matches("Software Engineer, New Grad", keywords)
+    assert title_matches("Machine Learning Intern", keywords)
+    assert title_matches("AI Researcher", keywords)
+    assert not title_matches("Enterprise Account Executive", keywords)
+    assert not title_matches("Retail Associate (Maintenance)", keywords)
+    assert title_matches("Anything at all", ())

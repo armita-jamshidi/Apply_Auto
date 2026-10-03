@@ -132,3 +132,38 @@ def test_discovery_adds_new_grad_list_companies_unless_disabled(
     discovery.main()
 
     assert fetched == ["lever-example", "listed-co", "lever-example"]
+
+
+def test_discovery_survives_emoji_titles_and_filters_by_title_keywords(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent.types import JobListing
+
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        f"database_url: 'sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}'\n"
+        "discovery:\n  title_keywords: [engineer]\n",
+        encoding="utf-8",
+    )
+    companies = tmp_path / "companies.yaml"
+    companies.write_text(
+        "companies:\n  - name: Lever Example\n    platform: lever\n    board: lever-example\n",
+        encoding="utf-8",
+    )
+    listings = [
+        JobListing("lever", "lever", "Lever Example", f"{title}", f"https://jobs.lever.co/x/{i}",
+                   "Remote - United States", "")
+        for i, title in enumerate(["\U0001f525 New Grad Engineer", "Account Executive"])
+    ]
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr("agent.settings.load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sys, "argv", ["job-agent", "--settings", str(settings), "--companies", str(companies)]
+    )
+    monkeypatch.setattr(discovery, "fetch_lever_jobs", lambda *_args, **_kwargs: listings)
+
+    assert discovery.main() == 0
+
+    output = capsys.readouterr().out
+    assert "New Grad Engineer" in output
+    assert "Account Executive" not in output

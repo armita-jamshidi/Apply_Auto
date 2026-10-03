@@ -3,6 +3,7 @@
 import argparse
 import functools
 import logging
+import sys
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +15,7 @@ from agent.fetchers.lever import fetch_lever_jobs
 from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
 from agent.seniority import classify_experience
-from agent.settings import load_companies, load_settings
+from agent.settings import load_companies, load_settings, title_matches
 from agent.sources.new_grad_list import fetch_new_grad_companies
 from db.models import Base
 from db.session import create_database_engine, create_session_factory
@@ -39,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """Fetch configured boards, persist in-scope jobs, and print each result."""
+    # Job titles can contain emoji; never let the Windows console encoding crash discovery.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args()
     settings = load_settings(args.settings)
@@ -101,6 +106,8 @@ def main() -> int:
                     ambiguous = is_ambiguous_location(listing.location_raw)
                     if category == "other" and not ambiguous:
                         continue
+                    if not title_matches(listing.title, settings.title_keywords):
+                        continue
                     level = classify_experience(listing.title, listing.description).level
                     if level not in settings.experience_levels:
                         continue
@@ -136,6 +143,8 @@ def _worth_describing(listing, *, settings) -> bool:
         listing.location_raw, include_hybrid_nc=settings.include_hybrid_nc
     )
     if category == "other" and not is_ambiguous_location(listing.location_raw):
+        return False
+    if not title_matches(listing.title, settings.title_keywords):
         return False
     level = classify_experience(listing.title).level
     return level in settings.experience_levels or level == "unknown"

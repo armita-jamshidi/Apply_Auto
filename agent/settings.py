@@ -1,6 +1,7 @@
 """Load local YAML configuration and environment overrides."""
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ class AgentSettings:
     company_monthly_application_cap: int
     experience_levels: tuple[str, ...] = ("early", "unknown")
     include_new_grad_list: bool = True
+    title_keywords: tuple[str, ...] = ()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -84,7 +86,20 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         company_monthly_application_cap=company_monthly_application_cap,
         experience_levels=experience_levels,
         include_new_grad_list=bool(discovery.get("include_new_grad_list", True)),
+        title_keywords=tuple(
+            str(keyword).strip().casefold()
+            for keyword in discovery.get("title_keywords") or []
+            if str(keyword).strip()
+        ),
     )
+
+
+def title_matches(title: str, keywords: tuple[str, ...]) -> bool:
+    """Return whether a job title contains one of the keywords (all titles if none)."""
+    if not keywords:
+        return True
+    text = " ".join(title.casefold().split())
+    return any(re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text) for keyword in keywords)
 
 
 def resolve_database_url(database_url: str) -> str:

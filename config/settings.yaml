@@ -12,6 +12,30 @@ discovery:
   experience_levels: [early, unknown]
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
+  # Keep only titles containing one of these words. Remove the list to keep every role.
+  title_keywords:
+    - engineer
+    - engineering
+    - developer
+    - software
+    - swe
+    - data
+    - machine learning
+    - ml
+    - ai
+    - analyst
+    - scientist
+    - research
+    - full stack
+    - fullstack
+    - backend
+    - frontend
+    - platform
+    - infrastructure
+    - security
+    - forward deployed
+    - solutions engineer
+    - technical
 safeguards:
   daily_application_cap: 5
   company_monthly_application_cap: 5
