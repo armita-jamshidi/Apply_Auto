@@ -25,7 +25,7 @@ LIST = """
 <td>1d</td>
 </tr>
 <tr>
-<td><strong>TripAdvisor</strong></td><td>Software Engineer I</td><td>Needham, MA</td>
+<td><strong>🔥 TripAdvisor</strong></td><td>Software Engineer I</td><td>Needham, MA</td>
 <td><a href="https://job-boards.greenhouse.io/tripadvisor/jobs/6903058?utm_source=Simplify">
 Apply</a></td><td>2d</td>
 </tr>

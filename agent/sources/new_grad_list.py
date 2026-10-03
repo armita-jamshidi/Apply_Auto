@@ -60,6 +60,8 @@ def companies_from_list(markdown: str) -> list[CompanyConfig]:
         if not cells:
             continue
         name = " ".join(unescape(re.sub(r"<[^>]+>", " ", cells[0])).split())
+        # The list prefixes some companies with markers such as a fire emoji.
+        name = re.sub(r"^[^\w(↳]+", "", name).strip()
         # A "↳" row continues the company named on the row above.
         if name and name != "↳":
             company_name = name
