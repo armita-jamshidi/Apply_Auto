@@ -26,6 +26,7 @@ dependencies = [
 job-agent = "agent.main:main"
 job-apply = "agent.applier.cli:main"
 job-dashboard = "agent.dashboard:main"
+job-run = "agent.pipeline:main"
 
 [project.optional-dependencies]
 dev = [
@@ -34,7 +35,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*"]
+include = ["agent*", "db*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

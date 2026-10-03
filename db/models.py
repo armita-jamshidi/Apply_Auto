@@ -34,6 +34,7 @@ class Job(Base):
     fit_score: Mapped[int | None] = mapped_column(Integer)
     fit_reasons: Mapped[list[str] | None] = mapped_column(JSON)
     dealbreakers: Mapped[list[str] | None] = mapped_column(JSON)
+    fit_recommendation: Mapped[str | None] = mapped_column(String(20))
     experience_level: Mapped[str | None] = mapped_column(String(20))
     min_years_experience: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
@@ -61,6 +62,9 @@ class Application(Base):
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     answers: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # Drafts left blank for the candidate to review, and why each field was filled or left blank.
+    suggested_answers: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    field_notes: Mapped[dict[str, str] | None] = mapped_column(JSON)
     tailored_resume_path: Mapped[str | None] = mapped_column(String(2048))
     screenshot_path: Mapped[str | None] = mapped_column(String(2048))
     review_path: Mapped[str | None] = mapped_column(String(2048))

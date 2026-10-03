@@ -11,7 +11,9 @@ from agent.types import JobListing
 from db.models import Application, Job, utc_now
 
 READY_FOR_YOU = "manual_review"
-MARKABLE_STATUSES = frozenset({"new", READY_FOR_YOU, "applied", "skipped"})
+# Removed jobs stay in the database (hidden) so discovery does not add them back.
+REMOVED = "removed"
+MARKABLE_STATUSES = frozenset({"new", "queued", READY_FOR_YOU, "applied", "skipped", REMOVED})
 
 
 def qualification_problem(fit: FitSummary) -> str | None:
@@ -24,6 +26,15 @@ def qualification_problem(fit: FitSummary) -> str | None:
         reason = fit.reasons[0] if fit.reasons else "the fit check recommends skipping it"
         return f"fit score {fit.score} is too low: {reason}"
     return None
+
+
+def store_fit(job: Job, fit: FitSummary) -> None:
+    """Save a fit score, its reasons, dealbreakers, and recommendation on the job."""
+    job.fit_score = fit.score
+    job.fit_reasons = list(fit.reasons)
+    job.dealbreakers = list(fit.dealbreakers)
+    if fit.recommended_action is not None:
+        job.fit_recommendation = fit.recommended_action
 
 
 def record_attempt(
@@ -57,9 +68,7 @@ def record_attempt(
     elif not stored.description and description:
         stored.description = description
     if fit is not None and fit.score is not None:
-        stored.fit_score = fit.score
-        stored.fit_reasons = list(fit.reasons)
-        stored.dealbreakers = list(fit.dealbreakers)
+        store_fit(stored, fit)
     if stored.status != "applied":
         stored.status = "skipped" if skipped_reason else READY_FOR_YOU
     session.add(
@@ -67,6 +76,8 @@ def record_attempt(
             job_id=stored.id,
             mode=mode,
             answers=dict(result.answers) if result else {},
+            suggested_answers=dict(result.suggested_answers) if result else None,
+            field_notes=dict(result.field_notes) if result else None,
             screenshot_path=result.screenshot_path if result else None,
             review_path=str(review_path) if review_path else None,
             error=skipped_reason or (result.error if result else None),
