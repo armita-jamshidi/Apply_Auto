@@ -137,6 +137,18 @@ python -m agent.applier.cli --hand-off --platform lever --job-url "https://jobs.
 
 `--hand-off` cannot be combined with `--live`.
 
+### Copying answers into your own browser (assist)
+
+Some sites reject applications from browsers that software is driving. `--assist` works out every answer in a hidden browser, then opens the application form in your normal browser, untouched by automation, together with the review page. Every filled value, draft, and the resume file path has a **Copy** button; paste each answer into the form, upload the resume, and submit it yourself:
+
+```powershell
+python -m agent.applier.cli --assist --platform lever --job-url "https://jobs.lever.co/example/123"
+```
+
+Every browser the agent opens keeps Chrome's security sandbox on.
+
+If a Lever form says "error verifying your application" even when filled entirely by hand, its background CAPTCHA is failing for your browser or network: try a Guest window without extensions, turn off any VPN, allow third-party cookies for `jobs.lever.co`, or try another network.
+
 Live submission is an explicit `--live` opt-in. Before opening the form, the CLI:
 
 - requires the job to be in the database (run discovery first);

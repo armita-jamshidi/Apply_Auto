@@ -128,6 +128,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Profile folder for --hand-off (default: .playwright/profile in the project).",
     )
     mode.add_argument(
+        "--assist",
+        action="store_true",
+        help=(
+            "Work out every answer in a hidden browser, then open the untouched form in your "
+            "own browser with a review page of answers to copy. Use for sites that reject "
+            "automated browsers. Never submits."
+        ),
+    )
+    mode.add_argument(
         "--hand-off",
         action="store_true",
         help=(
@@ -152,14 +161,17 @@ def launch_hand_off_browser(
     if browser == "chrome":
         try:
             return playwright.chromium.launch_persistent_context(
-                str(profile), headless=False, channel="chrome"
+                str(profile), headless=False, channel="chrome", chromium_sandbox=True
             )
         except PlaywrightError as error:
             LOGGER.warning(
                 "Could not start installed Google Chrome; using Playwright's Chromium: %s",
                 str(error).splitlines()[0],
             )
-    return playwright.chromium.launch_persistent_context(str(profile), headless=False)
+    # Playwright disables Chrome's sandbox unless asked; keep it on.
+    return playwright.chromium.launch_persistent_context(
+        str(profile), headless=False, chromium_sandbox=True
+    )
 
 
 def is_everyday_chrome_profile(profile: Path) -> bool:
@@ -261,6 +273,10 @@ def _report_dry_run(
         result=result,
         fit=fit,
         resume_name=args.resume.name,
+        resume_file=str(args.resume.resolve()),
+        assist_command=hand_off_command(
+            args.platform, args.job_url, job.company, job.title, mode="assist"
+        ),
         form_url=form_url(args.platform, args.job_url),
         finish_command=finish_command(args, job.company, job.title),
     )
@@ -416,7 +432,9 @@ def main() -> int:
                 browser = launch_hand_off_browser(playwright, args.browser, args.browser_profile)
                 page = browser.pages[0] if browser.pages else browser.new_page()
             else:
-                browser = playwright.chromium.launch(headless=not args.headed)
+                browser = playwright.chromium.launch(
+                    headless=args.assist or not args.headed, chromium_sandbox=True
+                )
                 page = browser.new_page()
             try:
                 kwargs: dict[str, object] = {
@@ -471,9 +489,22 @@ def main() -> int:
 
     if not args.live and not reported:
         _report_dry_run(args, job, result, stored, description, review_path)
+    if args.assist:
+        webbrowser.open(form_url(args.platform, args.job_url))
+        webbrowser.open(review_path.resolve().as_uri())
+        print(
+            "\nOpened the application form in your browser (not automated) and the review "
+            "page with every answer. Copy each answer into the form, upload the resume file "
+            "shown on the review page, and submit it yourself."
+        )
 
     print(f"Status: {result.status}")
-    print(f"Mode: {'live' if args.live else 'hand_off' if args.hand_off else 'dry_run'}")
+    mode = next(
+        (name for name, on in (("live", args.live), ("hand_off", args.hand_off),
+                               ("assist", args.assist)) if on),
+        "dry_run",
+    )
+    print(f"Mode: {mode}")
     print(f"Resume uploaded: {'yes' if result.resume_uploaded else 'no'}")
     print(f"Submitted: {'yes' if result.submitted else 'no'}")
     print(f"Screenshot: {result.screenshot_path or 'not captured'}")

@@ -186,7 +186,8 @@ def test_dry_run_writes_review_page_and_runs_headless(
 
     class FakePlaywright:
         def __enter__(self):
-            def launch(*, headless: bool):
+            def launch(*, headless: bool, chromium_sandbox: bool):
+                assert chromium_sandbox is True
                 launches.append(headless)
                 return SimpleNamespace(new_page=lambda: object(), close=lambda: None)
 
@@ -280,8 +281,13 @@ def test_hand_off_fills_in_kept_browser_and_waits_for_person(
     class FakePlaywright:
         def __enter__(self):
             def launch_persistent_context(
-                user_data_dir: str, *, headless: bool, channel: str | None = None
+                user_data_dir: str,
+                *,
+                headless: bool,
+                chromium_sandbox: bool,
+                channel: str | None = None,
             ):
+                assert chromium_sandbox is True
                 events.append(("launch", user_data_dir, headless, channel))
                 return SimpleNamespace(
                     pages=[page], close=lambda: events.append("closed")
@@ -354,9 +360,15 @@ class FakeChromium:
         self.chrome_installed = chrome_installed
 
     def launch_persistent_context(
-        self, user_data_dir: str, *, headless: bool, channel: str | None = None
+        self,
+        user_data_dir: str,
+        *,
+        headless: bool,
+        chromium_sandbox: bool,
+        channel: str | None = None,
     ):
         assert headless is False
+        assert chromium_sandbox is True, "Chrome's sandbox must stay on"
         self.calls.append(channel)
         if channel == "chrome" and not self.chrome_installed:
             raise PlaywrightError("Chromium distribution 'chrome' is not found")
@@ -403,3 +415,91 @@ def test_everyday_chrome_profile_is_refused(
 
     assert chromium.calls == []
     assert cli.is_everyday_chrome_profile(tmp_path / "hand-off") is False
+
+
+def test_review_page_has_copy_buttons_resume_path_and_assist_command(tmp_path: Path) -> None:
+    page_path = tmp_path / "review.html"
+    resume = tmp_path / "My Resume.pdf"
+
+    write_review_page(
+        page_path,
+        job=JOB,
+        result=make_result(),
+        fit=FitSummary(score=70),
+        resume_name=resume.name,
+        resume_file=str(resume),
+        assist_command=cli.hand_off_command("lever", JOB.url, "Example Co", "Engineer", "assist"),
+    )
+
+    html = page_path.read_text(encoding="utf-8")
+    assert "data-copy='Alex'" in html
+    assert "data-copy='Line one.\nLine two &lt;b&gt;bold&lt;/b&gt;.'" in html
+    assert f"data-copy='{resume}'" in html
+    assert "python -m agent.applier.cli --assist --platform lever" in html
+    assert "navigator.clipboard.writeText" in html
+
+
+def test_assist_opens_untouched_form_and_review_in_own_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    launches: list[bool] = []
+
+    class FakePlaywright:
+        def __enter__(self):
+            def launch(*, headless: bool, chromium_sandbox: bool):
+                assert chromium_sandbox is True
+                launches.append(headless)
+                return SimpleNamespace(new_page=lambda: object(), close=lambda: None)
+
+            return SimpleNamespace(chromium=SimpleNamespace(launch=launch))
+
+        def __exit__(self, *_exc) -> None:
+            return None
+
+    review_path = tmp_path / "review.html"
+    opened: list[str] = []
+    filler_kwargs: dict[str, object] = {}
+
+    def fake_lever(*_args, **kwargs):
+        filler_kwargs.update(kwargs)
+        return make_result()
+
+    monkeypatch.setattr(cli, "sync_playwright", FakePlaywright)
+    monkeypatch.setitem(cli.APPLIERS, "lever", fake_lever)
+    monkeypatch.setattr(cli, "_load_stored_job", lambda _url: None)
+    monkeypatch.setattr(cli, "_dry_run_fit", lambda *_args: FitSummary(score=80))
+    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "job-apply",
+            "--assist",
+            "--headed",
+            "--platform",
+            "lever",
+            "--job-url",
+            "https://jobs.lever.co/sample/job-1",
+            "--resume",
+            str(tmp_path / "resume.pdf"),
+            "--screenshot",
+            str(tmp_path / "shot.png"),
+            "--review",
+            str(review_path),
+        ],
+    )
+
+    cli.main()
+
+    assert launches == [True], "assist always works out answers in a hidden browser"
+    assert filler_kwargs["submit_live"] is False
+    assert opened == ["https://jobs.lever.co/sample/job-1/apply", review_path.resolve().as_uri()]
+    output = capsys.readouterr().out
+    assert "Mode: assist" in output
+    assert "submit it yourself" in output
+
+
+def test_assist_cannot_be_combined_with_other_modes() -> None:
+    for other in ("--live", "--hand-off"):
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(["--job-url", JOB.url, "--assist", other])

@@ -40,14 +40,16 @@ class FieldRow:
     note: str | None
 
 
-def hand_off_command(platform: str, job_url: str, company: str, title: str) -> str:
-    """Return the command that reopens a job's form, filled, in hand-off mode."""
+def hand_off_command(
+    platform: str, job_url: str, company: str, title: str, mode: str = "hand-off"
+) -> str:
+    """Return the command that reopens a job's form in hand-off (or assist) mode."""
 
     def quoted(value: object) -> str:
         return '"' + str(value).replace('"', "") + '"'
 
     return (
-        f"python -m agent.applier.cli --hand-off --platform {platform} "
+        f"python -m agent.applier.cli --{mode} --platform {platform} "
         f"--job-url {quoted(job_url)} --company {quoted(company)} --title {quoted(title)}"
     )
 
@@ -96,6 +98,8 @@ def write_review_page(
     generated_at: datetime | None = None,
     form_url: str | None = None,
     finish_command: str | None = None,
+    assist_command: str | None = None,
+    resume_file: str | None = None,
 ) -> list[FieldRow]:
     """Write a self-contained HTML review page and return the field rows it shows."""
     rows = review_rows(result, resume_name)
@@ -139,10 +143,15 @@ def write_review_page(
         else ""
     )
     finish_html = ""
-    if form_url or finish_command:
+    if form_url or finish_command or assist_command or resume_file:
         link_html = (
             f"<p>Application form: <a href='{escape(form_url)}'>{escape(form_url)}</a></p>"
             if form_url
+            else ""
+        )
+        resume_html = (
+            f"<p>Resume file: <code>{escape(resume_file)}</code> {_copy_button(resume_file)}</p>"
+            if resume_file
             else ""
         )
         command_html = (
@@ -152,8 +161,16 @@ def write_review_page(
             if finish_command
             else ""
         )
+        assist_html = (
+            "<p>If the site rejects applications from automated browsers, open the untouched "
+            "form in your own Chrome instead and copy the answers from this page:</p>"
+            f"<pre class='command'>{escape(assist_command)}</pre>"
+            if assist_command
+            else ""
+        )
         finish_html = (
-            f"<section><h2>Finish this application</h2>{link_html}{command_html}</section>"
+            "<section><h2>Finish this application</h2>"
+            f"{link_html}{resume_html}{command_html}{assist_html}</section>"
         )
     description_html = (
         f"<details><summary>Job description</summary><pre>{escape(description)}</pre></details>"
@@ -213,6 +230,11 @@ pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
 .filled {{ color: var(--filled); }} .draft {{ color: var(--draft); }}
 .manual_review {{ color: var(--manual); }} .skipped {{ color: var(--skipped); }}
 details pre {{ margin-top: 12px; max-height: 480px; overflow: auto; }}
+button.copy {{
+  font: inherit; font-size: 0.8rem; padding: 1px 10px; margin-top: 6px; cursor: pointer;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--text);
+}}
 pre.command {{
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
   font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
@@ -252,6 +274,26 @@ pre.command {{
 {description_html}
 </section>
 </main>
+<script>
+document.addEventListener('click', async (event) => {{
+  const button = event.target.closest('button.copy');
+  if (!button) return;
+  const text = button.dataset.copy;
+  try {{
+    await navigator.clipboard.writeText(text);
+  }} catch {{
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }}
+  const label = button.textContent;
+  button.textContent = 'Copied';
+  setTimeout(() => {{ button.textContent = label; }}, 1500);
+}});
+</script>
 </body>
 </html>
 """
@@ -263,7 +305,11 @@ pre.command {{
 def _value(row: FieldRow) -> str:
     if row.value is None:
         return "<span class='muted'>blank</span>"
-    return f"<pre>{escape(row.value)}</pre>"
+    return f"<pre>{escape(row.value)}</pre>{_copy_button(row.value)}"
+
+
+def _copy_button(text: str) -> str:
+    return f"<button type='button' class='copy' data-copy='{escape(text)}'>Copy</button>"
 
 
 def _recommendation(action: str | None) -> str:
