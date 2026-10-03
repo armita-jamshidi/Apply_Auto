@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from agent.filters import (
+    find_language_dealbreakers,
     find_non_nc_workplace_dealbreakers,
     is_ambiguous_location,
     normalize_location,
@@ -106,3 +107,27 @@ def test_persist_job_skips_duplicate_url() -> None:
         assert len(session.scalars(select(Job)).all()) == 1
 
     engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        (
+            "Fluency in Spanish is required for this customer-facing role.",
+            ["Requires Spanish proficiency, which the profile does not list"],
+        ),
+        (
+            "Must be bilingual in English and Japanese.",
+            ["Requires Japanese proficiency, which the profile does not list"],
+        ),
+        ("Spanish is a plus.", []),
+        ("Proficiency in French preferred.", []),
+        ("Strong coder with proficiency in programming languages such as Python or Java.", []),
+        ("Fluent Persian is required.", []),
+        ("Native-level English required.", []),
+    ],
+)
+def test_language_dealbreakers_only_for_required_unspoken_languages(
+    description: str, expected: list[str]
+) -> None:
+    assert find_language_dealbreakers(description, ["English", "Farsi/Persian"]) == expected

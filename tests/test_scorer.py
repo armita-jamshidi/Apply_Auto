@@ -158,3 +158,19 @@ def test_api_schema_avoids_unsupported_integer_bounds() -> None:
 
     assert "minimum" not in score_schema and "maximum" not in score_schema
     assert ACTION_SCHEMA["additionalProperties"] is False
+
+
+def test_required_language_the_profile_lacks_forces_skip() -> None:
+    client = make_client(valid_payload(score=92))
+    profile = {"application_answers": {"languages": ["English"]}}
+
+    result = score_job(
+        "Build services. Fluency in Spanish is required.",
+        profile,
+        fit_score_threshold=70,
+        model="test-model",
+        client=client,
+    )
+
+    assert result.recommended_action == "skip"
+    assert "Requires Spanish proficiency, which the profile does not list" in result.dealbreakers

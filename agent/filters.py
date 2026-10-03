@@ -125,6 +125,46 @@ def find_non_nc_workplace_dealbreakers(description: str) -> list[str]:
     ]
 
 
+HUMAN_LANGUAGES = (
+    "Spanish", "French", "German", "Portuguese", "Italian", "Mandarin", "Chinese", "Cantonese",
+    "Japanese", "Korean", "Arabic", "Hindi", "Russian", "Dutch", "Hebrew", "Turkish",
+    "Vietnamese", "Polish", "Farsi", "Persian", "Tagalog", "Urdu", "Bengali", "Punjabi", "Greek",
+    "Swedish", "Norwegian", "Danish", "Finnish", "Thai", "Indonesian", "Ukrainian", "Romanian",
+    "Czech", "Hungarian", "Swahili", "American Sign Language",
+)
+_LANGUAGE_REQUIRED = re.compile(
+    r"\b(?:fluen\w*|proficien\w*|bilingual|native|business[- ]level|working knowledge"
+    r"|required|must|(?:ability to|you) (?:speak|read|write))\b",
+    re.IGNORECASE,
+)
+_LANGUAGE_OPTIONAL = re.compile(
+    r"\b(?:a plus|plus|preferred|nice to have|bonus|advantage|desirable|beneficial)\b",
+    re.IGNORECASE,
+)
+
+
+def find_language_dealbreakers(description: str, spoken_languages: list[str]) -> list[str]:
+    """Find human languages a job requires that the candidate does not list."""
+    spoken = {
+        name.strip().casefold()
+        for language in spoken_languages
+        for name in str(language).split("/")
+        if name.strip()
+    }
+    missing: list[str] = []
+    for sentence in re.split(r"(?<=[.!?;\n])\s*", description):
+        if not _LANGUAGE_REQUIRED.search(sentence) or _LANGUAGE_OPTIONAL.search(sentence):
+            continue
+        for language in HUMAN_LANGUAGES:
+            if language.casefold() in spoken or language in missing:
+                continue
+            if re.search(rf"\b{re.escape(language)}\b", sentence):
+                missing.append(language)
+    return [
+        f"Requires {language} proficiency, which the profile does not list" for language in missing
+    ]
+
+
 def normalize_location(location: str, *, include_hybrid_nc: bool = True) -> LocationCategory:
     """Classify a listing as US-remote, North Carolina, or out of scope."""
     text = " ".join(location.split())
