@@ -100,7 +100,7 @@ def test_no_available_sources_skips_anthropic_call() -> None:
 def test_project_summary_can_ground_a_custom_answer() -> None:
     project_summary = "Built a Python service for literature analysis."
     decision = answer_custom_question(
-        "Describe a relevant project.",
+        "What is your most relevant project?",
         {"projects": [{"name": "Evidence Tool", "summary": project_summary}]},
         "",
         client=make_client(project_summary, project_summary),
@@ -109,6 +109,45 @@ def test_project_summary_can_ground_a_custom_answer() -> None:
 
     assert decision.answer == project_summary
     assert decision.needs_manual_review is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Please provide a summary highlighting your top two exceptional academic and/or "
+        "professional accomplishments. Ideally, the examples you share will be a reflection of "
+        "your most highly technical accomplishments.",
+        "Describe a relevant project.",
+        "Tell us about a technical challenge you solved.",
+        "What is your proudest achievement?",
+    ],
+)
+def test_open_ended_questions_get_a_cited_draft(question: str) -> None:
+    statement = "I built a Python service for literature analysis."
+    client = make_client(None, None, tool_name=WHY_TOOL_NAME)
+    client.messages.create.return_value.content[0].input = {
+        "answer": statement,
+        "claims": [
+            {
+                "statement": statement,
+                "evidence": "Built a Python service for literature analysis.",
+                "source": "resume",
+            }
+        ],
+    }
+
+    decision = answer_custom_question(
+        question,
+        {"name": "Sample"},
+        "Built a Python service for literature analysis.",
+        client=client,
+        model="test-model",
+    )
+
+    assert decision.answer == statement
+    assert decision.is_motivation_draft is True
+    assert decision.needs_manual_review is True
+    assert client.messages.create.call_args.kwargs["tools"][0]["name"] == WHY_TOOL_NAME
 
 
 @pytest.mark.parametrize(
