@@ -10,6 +10,7 @@
 # Browser state and generated artifacts
 /screenshots/
 /reviews/
+/dashboard.html
 /.playwright/
 /playwright/.auth/
 /auth/

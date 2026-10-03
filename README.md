@@ -172,6 +172,24 @@ Any existing live-attempt record for a job blocks another attempt, even if the b
 job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/jobs/123" --live
 ```
 
+## Dashboard
+
+```powershell
+python -m agent.dashboard
+```
+
+writes and opens `dashboard.html` (git-ignored): every discovered job with its company, role, location, fit score, last activity, and status, filterable and searchable:
+
+- **Ready for you:** the form was filled; open it with the command under **Finish**, answer what is left, and submit it yourself.
+- **New:** found by discovery and not attempted yet, highest fit first. Unmet requirements are flagged in red.
+- **Check location:** the location label was too vague to decide.
+- **Applied:** with the date. When a hand-off window closes, the terminal asks whether you submitted and records the answer.
+- **Skipped:** low fit, unmet requirements, or marked by hand.
+
+Discovery and every `job-apply` run refresh the page. Update a job by hand with `--mark-applied "JOB URL"`, `--mark-skipped`, or `--mark-new`.
+
+Before filling a form, `job-apply` checks the stored job against your profile. Jobs with unmet requirements (for example a spoken language you do not list) or a low fit score are not filled and are marked Skipped with the reason; `--ignore-fit` fills them anyway.
+
 ## Configuration
 
 `config/settings.yaml` controls location behavior, HTTP retry backoff, the fit-score threshold, the Anthropic model, and the live-application caps (`safeguards.daily_application_cap` and `safeguards.company_monthly_application_cap`, both counted in America/New_York time). Set `location.include_hybrid_nc` to `false` to exclude hybrid roles even when located in North Carolina. Put `ANTHROPIC_API_KEY` in the ignored local `.env`; never put a real key in `.env.example` or source control. The private `profile/profile.yaml` and resume PDF are intentionally absent; copy the fictional example only as a schema reference and keep real personal material local.

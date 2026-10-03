@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
+from agent.dashboard import refresh_dashboard
 from agent.fetchers.ashby import fetch_ashby_jobs
 from agent.fetchers.greenhouse import fetch_greenhouse_jobs
 from agent.fetchers.lever import fetch_lever_jobs
@@ -102,6 +103,9 @@ def main() -> int:
         engine.dispose()
 
     LOGGER.info("Finished discovery; printed %d in-scope listings.", found_count)
+    dashboard = refresh_dashboard()
+    if dashboard is not None:
+        print(f"Dashboard: {dashboard}")
     return 0
 
 

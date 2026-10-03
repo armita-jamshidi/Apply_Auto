@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import sys
 import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,12 +32,14 @@ from agent.applier.review import (
     write_review_page,
 )
 from agent.applier.smartrecruiters import run_smartrecruiters_application
+from agent.dashboard import refresh_dashboard
 from agent.safeguards import live_application_block_reason
 from agent.scorer import score_job
 from agent.settings import PROJECT_ROOT, load_settings
+from agent.tracking import mark_job, qualification_problem, record_attempt
 from agent.types import JobListing
 from db.models import Application, Job, utc_now
-from db.session import create_database_engine, create_session_factory
+from db.session import create_database_engine, create_session_factory, ensure_schema
 
 LOGGER = logging.getLogger(__name__)
 PLATFORM_HOSTS = {
@@ -112,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Submit only if persisted score, dealbreaker, duplicate, and rate-limit "
             "guards pass."
         ),
+    )
+    parser.add_argument(
+        "--ignore-fit",
+        action="store_true",
+        help="Fill the form even when the fit check finds unmet requirements or a low score.",
     )
     parser.add_argument(
         "--browser",
@@ -265,8 +273,10 @@ def _report_dry_run(
     stored: Job | None,
     description: str,
     review_path: Path,
-) -> None:
-    fit = _dry_run_fit(stored, result.job_description or description, args.profile)
+    fit: FitSummary | None = None,
+) -> FitSummary:
+    if fit is None:
+        fit = _dry_run_fit(stored, result.job_description or description, args.profile)
     rows = write_review_page(
         review_path,
         job=job,
@@ -286,6 +296,58 @@ def _report_dry_run(
     print(f"Review page: {review_path}")
     print(f"Fields: {counts}")
     print(f"Fit score: {fit.score if fit.score is not None else fit.note}")
+    return fit
+
+
+def _ask_submitted() -> bool:
+    """Ask in the terminal whether the person submitted; False when no one can answer."""
+    if sys.stdin is None or not sys.stdin.isatty():
+        return False
+    try:
+        answer = input("\nDid you submit this application? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().casefold() in {"y", "yes"}
+
+
+def _track_attempt(
+    job: JobListing,
+    lookup_url: str,
+    mode: str,
+    result: ApplierResult | None,
+    fit: FitSummary | None,
+    review_path: Path | None,
+    *,
+    skipped_reason: str | None = None,
+    submitted: bool = False,
+) -> None:
+    """Record the attempt for the dashboard; a missing database only logs a note."""
+    try:
+        engine = create_database_engine(load_settings().database_url)
+    except (ValueError, SQLAlchemyError, ImportError) as error:
+        LOGGER.info("Attempt not recorded; database unavailable: %s", error)
+        return
+    try:
+        ensure_schema(engine)
+        with create_session_factory(engine)() as session:
+            record_attempt(
+                session,
+                job=job,
+                lookup_url=lookup_url,
+                mode=mode,
+                result=result,
+                fit=fit,
+                review_path=review_path,
+                skipped_reason=skipped_reason,
+            )
+            session.flush()
+            if submitted:
+                mark_job(session, lookup_url, "applied")
+            session.commit()
+    except SQLAlchemyError as error:
+        LOGGER.info("Attempt not recorded; database unavailable: %s", error)
+    finally:
+        engine.dispose()
 
 
 def _prepare_live_application(
@@ -389,6 +451,19 @@ def main() -> int:
         PROJECT_ROOT / "screenshots" / f"{args.platform}-{stamp}.png"
     )
     review_path = args.review or PROJECT_ROOT / "reviews" / f"{args.platform}-{stamp}.html"
+    mode = next(
+        (
+            name
+            for name, enabled in (
+                ("live", args.live),
+                ("hand_off", args.hand_off),
+                ("assist", args.assist),
+            )
+            if enabled
+        ),
+        "dry_run",
+    )
+    lookup_url = args.job_url
     stored: Job | None = None
     engine: Engine | None = None
     session_factory: sessionmaker[Session] | None = None
@@ -407,7 +482,6 @@ def main() -> int:
             raise SystemExit(f"Live application blocked: {error}") from error
     else:
         # Discovery stores overview pages, so look up /apply-style URLs by their overview.
-        lookup_url = args.job_url
         if args.platform != "greenhouse":
             lookup_url = application_urls(args.platform, args.job_url)[0] or args.job_url
         stored = _load_stored_job(lookup_url)
@@ -425,7 +499,23 @@ def main() -> int:
         description=description,
     )
 
+    early_fit: FitSummary | None = None
+    if not args.live and not args.ignore_fit and stored is not None and stored.description.strip():
+        early_fit = _dry_run_fit(stored, stored.description, args.profile)
+        problem = qualification_problem(early_fit)
+        if problem:
+            _track_attempt(job, lookup_url, mode, None, early_fit, None, skipped_reason=problem)
+            refresh_dashboard()
+            print(
+                f"Not filling {company} - {title}: {problem}\n"
+                "Run again with --ignore-fit to fill it anyway."
+            )
+            return 3
+
     reported = False
+    fit: FitSummary | None = early_fit
+    skip_reason: str | None = None
+    submitted_by_person = False
     try:
         with sync_playwright() as playwright:
             if args.hand_off:
@@ -462,8 +552,17 @@ def main() -> int:
                         **kwargs,
                     )
                 if args.hand_off:
-                    _report_dry_run(args, job, result, stored, description, review_path)
+                    fit = _report_dry_run(
+                        args, job, result, stored, description, review_path, early_fit
+                    )
                     reported = True
+                    skip_reason = None if args.ignore_fit else qualification_problem(fit)
+                if args.hand_off and skip_reason:
+                    print(
+                        f"\nNot handing this form over: {skip_reason}\n"
+                        "Run again with --ignore-fit to finish it anyway."
+                    )
+                elif args.hand_off:
                     webbrowser.open(review_path.resolve().as_uri())
                     print(
                         "\nThe filled form is open in the browser window. Log in if the site "
@@ -477,6 +576,7 @@ def main() -> int:
                         page.wait_for_event("close", timeout=0)
                     except PlaywrightError:
                         LOGGER.info("Hand-off browser closed")
+                    submitted_by_person = _ask_submitted()
             finally:
                 browser.close()
         if args.live:
@@ -488,8 +588,14 @@ def main() -> int:
             engine.dispose()
 
     if not args.live and not reported:
-        _report_dry_run(args, job, result, stored, description, review_path)
-    if args.assist:
+        fit = _report_dry_run(args, job, result, stored, description, review_path, early_fit)
+        skip_reason = None if args.ignore_fit else qualification_problem(fit)
+    if args.assist and skip_reason:
+        print(
+            f"\nNot opening this form: {skip_reason}\n"
+            "Run again with --ignore-fit to open it anyway."
+        )
+    elif args.assist:
         webbrowser.open(form_url(args.platform, args.job_url))
         webbrowser.open(review_path.resolve().as_uri())
         print(
@@ -498,12 +604,24 @@ def main() -> int:
             "shown on the review page, and submit it yourself."
         )
 
+    if not args.live:
+        _track_attempt(
+            job,
+            lookup_url,
+            mode,
+            result,
+            fit,
+            review_path,
+            skipped_reason=skip_reason,
+            submitted=submitted_by_person,
+        )
+    dashboard = refresh_dashboard()
+    if submitted_by_person:
+        print(f"Recorded {company} - {title} as applied.")
+    if dashboard is not None:
+        print(f"Dashboard: {dashboard}")
+
     print(f"Status: {result.status}")
-    mode = next(
-        (name for name, on in (("live", args.live), ("hand_off", args.hand_off),
-                               ("assist", args.assist)) if on),
-        "dry_run",
-    )
     print(f"Mode: {mode}")
     print(f"Resume uploaded: {'yes' if result.resume_uploaded else 'no'}")
     print(f"Submitted: {'yes' if result.submitted else 'no'}")
