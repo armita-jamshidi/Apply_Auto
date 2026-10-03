@@ -15,6 +15,7 @@ from agent.applier.choices import (
     ChoiceGroups,
     choose_combobox_option,
     choose_select_option,
+    saved_text_answer,
     todays_date,
 )
 from agent.applier.confirmation import (
@@ -299,6 +300,11 @@ def run_tier1_dry_run(
             if normalized in DATE_LABELS:
                 answers[label_text] = todays_date()
                 locator.fill(answers[label_text])
+                continue
+            saved_answer = saved_text_answer(label_text, profile)
+            if saved_answer:
+                locator.fill(saved_answer)
+                answers[label_text] = saved_answer
                 continue
             try:
                 decision = answer_custom_question(

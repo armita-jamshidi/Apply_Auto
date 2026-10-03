@@ -837,3 +837,37 @@ def test_searchable_dropdown_picks_saved_demographic_answer(tmp_path: Path) -> N
 
     assert page.fields[question].value == "I am not a protected veteran"
     assert result.answers[question] == "I am not a protected veteran"
+
+
+def test_saved_text_answers_fill_without_calling_the_answer_model(tmp_path: Path) -> None:
+    profile_path, resume_path = create_profile_and_resume(tmp_path)
+    profile_path.write_text(
+        profile_path.read_text(encoding="utf-8")
+        + "application_answers:\n  how_did_you_hear: Online\n  earliest_start_date: 11/30/2026\n",
+        encoding="utf-8",
+    )
+    page = FakePage(
+        [
+            FakeField("First Name"),
+            FakeField("Last Name"),
+            FakeField("Resume/CV", field_type="file"),
+            FakeField("How did you hear about this job?"),
+            FakeField("When can you start?"),
+        ]
+    )
+    client = mock_answer_client(None, None)
+
+    result = run_greenhouse_dry_run(
+        page,
+        make_job(),
+        profile_path,
+        resume_path,
+        tmp_path / "filled.png",
+        answers_client=client,
+        resume_text="Python developer.",
+    )
+
+    assert page.fields["How did you hear about this job?"].value == "Online"
+    assert page.fields["When can you start?"].value == "11/30/2026"
+    client.messages.create.assert_not_called()
+    assert result.status == "dry_run_ready"

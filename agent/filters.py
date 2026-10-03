@@ -59,6 +59,11 @@ def _contains_nc(text: str) -> bool:
     )
 
 
+def mentions_north_carolina(text: str) -> bool:
+    """Return whether text names North Carolina or one of its main cities."""
+    return _contains_nc(text)
+
+
 def _contains_other_remote_restriction(text: str) -> bool:
     for region in _OTHER_REMOTE_REGIONS:
         if re.search(rf"\b{re.escape(region)}\b", text, flags=re.IGNORECASE):

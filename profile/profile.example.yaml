@@ -46,6 +46,16 @@ education:
 # Reused answers for choice questions (radio buttons, checkboxes, dropdowns).
 # Leave out anything you prefer to answer yourself; those questions stay for manual review.
 application_answers:
+  current_company: Example Systems
+  how_did_you_hear: Online
+  earliest_start_date: 01/15/2027
+  current_location: Raleigh, NC
+  currently_in_us: true
+  willing_to_relocate: false
+  # On-site or hybrid questions get "Yes" only for these places, up to the day limit.
+  onsite_ok_in:
+    - North Carolina
+  max_onsite_days_per_week: 5
   active_security_clearance: false
   eligible_for_security_clearance: true
   active_polygraph: false
@@ -57,5 +67,7 @@ application_answers:
   eeo:
     gender: decline
     race_ethnicity: decline
+    hispanic_latino: decline
+    lgbtq: decline
     veteran_status: "no"
     disability_status: decline

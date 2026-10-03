@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
+from agent.filters import mentions_north_carolina
+
 Wanted = list[list[str]]
 NO_SAVED_ANSWER_NOTE = (
     "No saved answer for this question; answer it in the form, or add it to "
@@ -67,7 +69,21 @@ DISABILITY_NO = [
     "don't have a disability",
     "No",
 ]
+HISPANIC_NO = ["Not Hispanic or Latino", "No"]
 OTHER = "Other"
+HOW_HEARD = re.compile(
+    r"\bhow did you (?:hear|learn|find)\b|\bwhere did you (?:hear|find|learn)\b"
+    r"|\breferral source\b"
+)
+START_DATE = re.compile(
+    r"\bwhen (?:can|could|would) you start\b|\bearliest (?:possible )?start\b"
+    r"|\bstart date\b|\bavailab\w* to start\b"
+)
+ON_SITE = re.compile(
+    r"\bon-?site\b|\bin[- ]office\b|\bin the office\b|\bhybrid\b"
+    r"|\b(?:work|working) (?:from|at|in) (?:our|the|a|your)\b.*\boffice\b"
+)
+NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 
 def desired_choices(question: str, profile: Mapping[str, Any]) -> Wanted | None:
@@ -95,6 +111,19 @@ def desired_choices(question: str, profile: Mapping[str, Any]) -> Wanted | None:
         if re.search(r"\b(?:eligib\w*|obtain|willing)\b", text):
             return _yes_no(answers.get("eligible_for_security_clearance"))
         return _yes_no(answers.get("active_security_clearance"))
+    if re.search(r"\brelocat\w*\b", text):
+        if _mentions_onsite_place(text, answers):
+            return [YES]
+        return _yes_no(answers.get("willing_to_relocate"))
+    if re.search(r"\b(?:located|based|reside|living|live)\b", text) and re.search(
+        r"\b(?:us|u\.s\.?|usa|united states)\b", text
+    ):
+        return _yes_no(answers.get("currently_in_us"))
+    if ON_SITE.search(text):
+        return _onsite_answer(text, answers)
+    if HOW_HEARD.search(text):
+        heard = answers.get("how_did_you_hear")
+        return [[str(heard), "Internet", OTHER]] if heard else None
     if re.search(r"\bnote ?-?takers?\b|\btranscri(?:be|ption)\b", text):
         return _yes_no(answers.get("ai_notetaker_consent"))
     if re.search(r"\blanguages?\b", text):
@@ -108,6 +137,13 @@ def desired_choices(question: str, profile: Mapping[str, Any]) -> Wanted | None:
         return _eeo(
             eeo.get("disability_status"), lambda value: DISABILITY_NO if value == "no" else None
         )
+    if re.search(r"\blgbt", text):
+        return _eeo(eeo.get("lgbtq"), _yes_no_synonyms)
+    if re.search(r"\bhispanic\b|\blatin[oax]\b", text):
+        return _eeo(
+            eeo.get("hispanic_latino"),
+            lambda value: HISPANIC_NO if value == "no" else _yes_no_synonyms(value),
+        )
     if re.search(r"\bgender\b", text):
         return _eeo(eeo.get("gender"), lambda value: GENDER.get(value, [value]))
     if re.search(r"\brace\b|\bethnicit(?:y|ies)\b", text) and not re.search(
@@ -115,6 +151,28 @@ def desired_choices(question: str, profile: Mapping[str, Any]) -> Wanted | None:
     ):
         return _race(eeo.get("race_ethnicity"))
     return None
+
+
+def saved_text_answer(question: str, profile: Mapping[str, Any]) -> str | None:
+    """Return a saved typed answer (start date, referral source, location, employer)."""
+    text = _normalize(question)
+    answers = _section(profile, "application_answers")
+    if HOW_HEARD.search(text):
+        key = "how_did_you_hear"
+    elif START_DATE.search(text):
+        key = "earliest_start_date"
+    elif re.search(r"\bcurrent (?:company|employer)\b", text):
+        key = "current_company"
+    elif re.search(
+        r"\bcurrent location\b|\bwhere are you (?:currently )?(?:located|based)\b"
+        r"|^location \(city\)",
+        text,
+    ):
+        key = "current_location"
+    else:
+        return None
+    value = answers.get(key)
+    return str(value).strip() if value not in (None, "") else None
 
 
 def match_options(wanted: Wanted, options: Sequence[str]) -> list[str]:
@@ -265,6 +323,35 @@ def _policy_answer(text: str) -> bool | None:
     ):
         return True
     return None
+
+
+def _onsite_answer(text: str, answers: Mapping[str, Any]) -> Wanted | None:
+    places = answers.get("onsite_ok_in")
+    if not isinstance(places, list):
+        return None
+    days = re.search(r"\b([1-7]|one|two|three|four|five)\b(?:\s+\w+){0,2}\s+days?\b", text)
+    max_days = answers.get("max_onsite_days_per_week")
+    if days and isinstance(max_days, int):
+        count = NUMBER_WORDS.get(days.group(1)) or int(days.group(1))
+        if count > max_days:
+            return [NO]
+    return [YES if _mentions_onsite_place(text, answers) else NO]
+
+
+def _mentions_onsite_place(text: str, answers: Mapping[str, Any]) -> bool:
+    places = answers.get("onsite_ok_in")
+    for place in places if isinstance(places, list) else []:
+        name = _normalize(str(place))
+        if name in {"north carolina", "nc"}:
+            if mentions_north_carolina(text):
+                return True
+        elif re.search(rf"\b{re.escape(name)}\b", text):
+            return True
+    return False
+
+
+def _yes_no_synonyms(value: str) -> list[str] | None:
+    return YES if value == "yes" else NO if value == "no" else None
 
 
 def _yes_no(value: object) -> Wanted | None:

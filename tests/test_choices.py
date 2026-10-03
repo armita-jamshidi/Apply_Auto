@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.applier.choices import DECLINE, desired_choices, match_options
+from agent.applier.choices import DECLINE, desired_choices, match_options, saved_text_answer
 
 PROFILE = {
     "work_authorization": {"authorized_to_work_in_us": True, "requires_sponsorship": False},
@@ -151,3 +151,73 @@ def test_missing_profile_facts_stay_manual() -> None:
 )
 def test_legal_acknowledgements_are_never_answered_automatically(question: str) -> None:
     assert desired_choices(question, PROFILE) is None
+
+
+LOCATION_PROFILE = {
+    "application_answers": {
+        "current_company": "Example Bakery",
+        "how_did_you_hear": "Online",
+        "earliest_start_date": "11/30/2026",
+        "current_location": "Durham, North Carolina",
+        "currently_in_us": True,
+        "willing_to_relocate": False,
+        "onsite_ok_in": ["North Carolina"],
+        "max_onsite_days_per_week": 5,
+        "eeo": {"hispanic_latino": "no", "lgbtq": "no"},
+    }
+}
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Are you currently based in or willing to relocate to the Bay Area?", ["No"]),
+        ("Are you willing to relocate to Raleigh, NC?", ["Yes"]),
+        ("Are you currently located in the US? *", ["Yes"]),
+        ("Are you able to work from our US office three days per week?", ["No"]),
+        ("Are you willing to work on-site 5 days a week in Durham, NC?", ["Yes"]),
+        ("Can you work on-site 6 days a week in Charlotte, North Carolina?", ["No"]),
+        ("This role is hybrid in Research Triangle Park. Are you able to commute?", ["Yes"]),
+        ("Are you Hispanic or Latino?", ["No"]),
+        ("I consider myself a member of the LGBTQ+ community. (optional)", ["No"]),
+    ],
+)
+def test_location_and_identity_answers(question: str, expected: list[str]) -> None:
+    assert choose(question, ["Yes", "No"], LOCATION_PROFILE) == expected
+
+
+def test_hispanic_option_wording_is_matched() -> None:
+    options = ["Hispanic or Latino", "Not Hispanic or Latino", "Decline to self-identify"]
+
+    assert choose("Ethnicity: Hispanic/Latino", options, LOCATION_PROFILE) == [
+        "Not Hispanic or Latino"
+    ]
+
+
+def test_how_did_you_hear_dropdown_falls_back_to_other() -> None:
+    assert choose(
+        "How did you hear about this job?", ["LinkedIn", "Referral", "Other"], LOCATION_PROFILE
+    ) == ["Other"]
+    assert choose(
+        "How did you hear about us?", ["Online job board", "Referral"], LOCATION_PROFILE
+    ) == ["Online job board"]
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("How did you hear about this job?", "Online"),
+        ("When can you start a new role?", "11/30/2026"),
+        ("Earliest start date *", "11/30/2026"),
+        ("Current company", "Example Bakery"),
+        ("Current location \u2731", "Durham, North Carolina"),
+        ("Location (City) *", "Durham, North Carolina"),
+        ("Why do you want to work here?", None),
+    ],
+)
+def test_saved_text_answers(question: str, expected: str | None) -> None:
+    assert saved_text_answer(question, LOCATION_PROFILE) == expected
+
+
+def test_onsite_questions_stay_manual_without_saved_places() -> None:
+    assert desired_choices("Can you work on-site in Austin, TX?", PROFILE) is None
