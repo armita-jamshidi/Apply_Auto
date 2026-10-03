@@ -122,3 +122,73 @@ companies:
   - name: Cisco
     platform: career_page
     url: https://jobs.cisco.com/
+
+  # Remote-friendly companies with AI and ML engineering roles (verified public boards)
+  - name: Deepgram
+    platform: ashby
+    board: deepgram
+  - name: Cresta
+    platform: greenhouse
+    board: cresta
+  - name: ElevenLabs
+    platform: ashby
+    board: elevenlabs
+  - name: Arize AI
+    platform: greenhouse
+    board: arizeai
+  - name: Reddit
+    platform: greenhouse
+    board: reddit
+  - name: Coinbase
+    platform: greenhouse
+    board: coinbase
+  - name: Instacart
+    platform: greenhouse
+    board: instacart
+  - name: Samsara
+    platform: greenhouse
+    board: samsara
+  - name: Eve
+    platform: greenhouse
+    board: eve
+  - name: Vanta
+    platform: ashby
+    board: vanta
+  - name: Grafana Labs
+    platform: greenhouse
+    board: grafanalabs
+  - name: Twilio
+    platform: greenhouse
+    board: twilio
+  - name: Temporal
+    platform: ashby
+    board: temporal
+  - name: Salesloft
+    platform: greenhouse
+    board: salesloft
+  - name: Snowflake
+    platform: ashby
+    board: snowflake
+  - name: Confluent
+    platform: ashby
+    board: confluent
+
+  # Research Triangle employers (verified public boards)
+  - name: Epic Games
+    platform: greenhouse
+    board: epicgames
+  - name: Pryon
+    platform: lever
+    board: pryon
+  - name: Pendo
+    platform: greenhouse
+    board: pendo
+  - name: Bandwidth
+    platform: greenhouse
+    board: bandwidth
+  - name: Teamworks
+    platform: ashby
+    board: teamworks
+  - name: Spreedly
+    platform: lever
+    board: spreedly

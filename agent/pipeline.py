@@ -31,7 +31,7 @@ from agent.settings import (
     load_settings,
     title_in_scope,
 )
-from agent.tracking import REMOVED, qualification_problem, store_fit
+from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
 from db.models import Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -77,6 +77,40 @@ def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     return removed
 
 
+def cap_jobs_per_company(session: Session, settings: AgentSettings) -> int:
+    """Keep the most relevant open jobs at each company and remove the rest; return how many.
+
+    Prepared jobs come first, then the highest fit scores, then the newest. Applied and
+    removed jobs are not counted or changed.
+    """
+    limit = settings.max_jobs_per_company
+    if not limit:
+        return 0
+    jobs = session.scalars(
+        select(Job).where(Job.status.in_(("new", "queued", READY_FOR_YOU)))
+    ).all()
+    by_company: dict[str, list[Job]] = {}
+    for job in jobs:
+        by_company.setdefault(" ".join(job.company.casefold().split()), []).append(job)
+    removed = 0
+    for group in by_company.values():
+        group.sort(
+            key=lambda job: (
+                job.status != READY_FOR_YOU,
+                -(job.fit_score if job.fit_score is not None else -1),
+                -job.id,
+            )
+        )
+        for job in group[limit:]:
+            reason = f"Kept the {limit} most relevant roles at {job.company}"
+            job.status = REMOVED
+            job.dealbreakers = list(dict.fromkeys([reason, *(job.dealbreakers or [])]))
+            removed += 1
+            print(f"[removed] {job.company} | {job.title} | {reason}")
+    session.commit()
+    return removed
+
+
 def score_unscored_jobs(
     session: Session,
     profile: Mapping[str, Any],
@@ -106,17 +140,18 @@ def score_unscored_jobs(
         return 0
     LOGGER.info("Scoring fit for %d jobs", len(jobs))
 
-    def assess(description: str) -> FitAssessment:
+    def assess(job: Job) -> FitAssessment:
         return scorer(
-            description,
+            job.description,
             profile,
             fit_score_threshold=settings.fit_score_threshold,
             model=settings.anthropic_model,
+            job_posting=posting_details(job),
         )
 
     scored = 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [(job, pool.submit(assess, job.description)) for job in jobs]
+        futures = [(job, pool.submit(assess, job)) for job in jobs]
         for job, future in futures:
             try:
                 assessment = future.result()
@@ -136,6 +171,11 @@ def score_unscored_jobs(
             scored += 1
             print(f"[fit {assessment.score:>3}] {job.company} | {job.title}")
     return scored
+
+
+def posting_details(job: Job) -> dict[str, str]:
+    """The board's own title, company, and location label, for the fit check."""
+    return {"title": job.title, "company": job.company, "location": job.location_raw}
 
 
 def jobs_to_prepare(session: Session, settings: AgentSettings, *, limit: int) -> list[Job]:
@@ -248,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Removed {removed} jobs outside your target roles.")
             scored = score_unscored_jobs(session, profile, settings, limit=args.score_limit)
             print(f"\nScored {scored} jobs.")
+            capped = cap_jobs_per_company(session, settings)
+            if capped:
+                print(f"Removed {capped} jobs beyond {settings.max_jobs_per_company} per company.")
             to_prepare = (
                 jobs_to_prepare(session, settings, limit=args.prepare) if args.prepare > 0 else []
             )

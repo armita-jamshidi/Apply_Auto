@@ -81,6 +81,8 @@ Requires Python 3.11+, Docker Compose, and Git. GitHub Actions runs Ruff and pyt
    job-agent
    ```
 
+   Discovery also reads two remote job sources (`discovery.remote_boards`): the public [We Work Remotely](https://weworkremotely.com) RSS feed, keeping jobs whose region includes the US, and the latest Hacker News "Who is hiring?" thread through HN's public Algolia API, reading each post's `Company | Role | Location` line. Their jobs link to the posting and are applied to by hand. Sites that block automated access, such as SimplyHired, and sources whose robots.txt disallows their API, such as Remotive, are not used.
+
    Discovery searches your configured companies plus every company with a Greenhouse, Lever, Ashby, or SmartRecruiters board on the public, community-maintained [SimplifyJobs New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions) list (`--no-new-grad-list` or `discovery.include_new_grad_list: false` turns that off). Each company's whole board is fetched through its public API, so roles not on the list are found too. Each job is labelled early career, mid, senior, or not stated from its title and the years of experience it requires; by default only early-career and not-stated roles are kept (`discovery.experience_levels` in `config/settings.yaml`).
 
    The CLI prints newly found and previously known in-scope listings. It continues to other companies if one board request fails. `DATABASE_URL` from `.env` overrides `config/settings.yaml`.
@@ -106,7 +108,7 @@ The tests use SQLite (in memory or in temporary files), mocked HTTP responses, a
 job-run
 ```
 
-runs discovery, fit-scores every job that has no score yet (`--score-limit`, default 150; one Anthropic call each), and prepares answers for the best new matches (`--prepare N`, default 5) by running the ordinary headless dry run on each. Jobs whose fit check finds unmet requirements or a low score move to Skipped. Prepared jobs move to **Ready for you**, and the dashboard opens. `--skip-discovery` reuses jobs already found. Nothing is submitted: finish each prepared application with its hand-off or assist command.
+runs discovery, fit-scores every job that has no score yet (`--score-limit`, default 150; one Anthropic call each), and prepares answers for the best new matches (`--prepare N`, default 5) by running the ordinary headless dry run on each. Jobs whose fit check finds unmet requirements or a low score move to Skipped. Each company keeps at most `discovery.max_jobs_per_company` open jobs (default 2): prepared jobs first, then the highest fit scores; the rest are removed. Applied jobs are never removed or counted. Prepared jobs move to **Ready for you**, and the dashboard opens. `--skip-discovery` reuses jobs already found. Nothing is submitted: finish each prepared application with its hand-off or assist command.
 
 Open-ended questions (for example "summarize your top two technical accomplishments", "describe a project you're proud of", or any "why" question) get a written draft built only from your profile, resume, and the job description, with every sentence tied to an exact source quote. Drafts are left blank in the form and shown on the dashboard and review page with a Copy button, so you can check them before pasting.
 

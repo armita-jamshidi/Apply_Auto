@@ -8,8 +8,16 @@ network:
   max_retries: 3
   backoff_seconds: 0.5
 discovery:
-  # Keep early-career roles and roles that state no level; add mid or senior to widen.
-  experience_levels: [early, unknown]
+  # Keep early-career, mid-level, and unstated-level roles; add senior to widen.
+  experience_levels: [early, mid, unknown]
+  # Drop roles whose description requires more than this many years of experience. A
+  # mid-level role (for example "Engineer II") must state that it needs this many or fewer.
+  max_years_experience: 2
+  # Also read these remote job boards and forums: weworkremotely (RSS feed) and hackernews
+  # (the monthly "Who is hiring?" thread). Remove an entry to stop reading it.
+  remote_boards: [weworkremotely, hackernews]
+  # Keep at most this many open jobs per company, the best fit scores first.
+  max_jobs_per_company: 2
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
   # Never keep internships, co-ops, or new-grad roles (matched in titles), or postings that

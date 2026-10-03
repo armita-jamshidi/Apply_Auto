@@ -53,6 +53,7 @@ def test_score_job_validates_structured_response_and_sends_only_inputs() -> None
     submitted = json.loads(request["messages"][0]["content"])
     assert submitted["candidate_profile"] == profile
     assert submitted["job_description"] == "Build Python services."
+    assert submitted["job_posting"] == {}
     assert submitted["fit_score_threshold"] == 80
 
 

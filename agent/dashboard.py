@@ -28,6 +28,8 @@ DASHBOARD_PATH = PROJECT_ROOT / "dashboard.html"
 LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 REVIEWS_DIR = PROJECT_ROOT / "reviews"
 DEFAULT_PORT = 8765
+# Platforms whose forms the applier can fill; other sources link to the posting only.
+FILLABLE_PLATFORMS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
 # Display order, label, and job.status values for each dashboard group.
 GROUPS = (
     ("ready", "Ready for you", {"manual_review"}),
@@ -451,7 +453,7 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
     finish = ""
-    if row.group in {"ready", "new", "location"}:
+    if row.group in {"ready", "new", "location"} and job.platform in FILLABLE_PLATFORMS:
         command = hand_off_command(job.platform, job.url, job.company, job.title)
         finish = f"<details><summary>Finish</summary><pre>{escape(command)}</pre></details>"
     search_text = escape(f"{job.company} {job.title} {job.location_raw}".casefold())

@@ -46,7 +46,8 @@ def add_job(db: Session, url: str, **fields) -> Job:
 
 
 def fake_scorer(scores: dict[str, FitAssessment]):
-    def score(description: str, _profile, **_kwargs) -> FitAssessment:
+    def score(description: str, _profile, **kwargs) -> FitAssessment:
+        assert kwargs["job_posting"]["location"] == "Remote - US"
         if description not in scores:
             raise RuntimeError("API unavailable")
         return scores[description]

@@ -4,6 +4,7 @@ import argparse
 import functools
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
@@ -16,12 +17,16 @@ from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
 from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
 from agent.seniority import classify_experience
 from agent.settings import (
+    AgentSettings,
+    CompanyConfig,
     excluded_role_reason,
     load_companies,
     load_settings,
     title_in_scope,
 )
 from agent.sources.new_grad_list import fetch_new_grad_companies
+from agent.sources.remote_boards import fetch_hn_whos_hiring, fetch_weworkremotely
+from agent.types import JobListing
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
 LOGGER = logging.getLogger("job_agent")
@@ -58,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             companies += fetch_new_grad_companies(exclude=companies)
         except Exception:
             LOGGER.exception("Could not load the new-grad list; using configured companies")
-    if not companies:
+    if not companies and not settings.remote_boards:
         LOGGER.info(
             "No companies configured; add ATS boards to config/companies.yaml."
         )
@@ -70,39 +75,14 @@ def main(argv: list[str] | None = None) -> int:
     found_count = 0
     try:
         with session_factory() as session:
-            for company in companies:
-                fetcher = {
-                    "greenhouse": fetch_greenhouse_jobs,
-                    "lever": fetch_lever_jobs,
-                    "ashby": fetch_ashby_jobs,
-                    "smartrecruiters": fetch_smartrecruiters_jobs,
-                }.get(company.platform)
-                if fetcher is None:
-                    LOGGER.info(
-                        "Skipping %s (%s) until its fetcher is available.",
-                        company.name,
-                        company.platform,
-                    )
-                    continue
-                if company.platform == "smartrecruiters":
-                    fetcher = functools.partial(
-                        fetcher,
-                        include=functools.partial(_worth_describing, settings=settings),
-                    )
+            for name, fetch in _sources(companies, settings):
                 try:
-                    listings = fetcher(
-                        company.board or "",
-                        company.name,
-                        max_retries=settings.max_retries,
-                        backoff_seconds=settings.backoff_seconds,
-                    )
+                    listings = fetch()
                 except Exception:
-                    LOGGER.exception(
-                        "Could not fetch %s board for %s", company.platform, company.name
-                    )
+                    LOGGER.exception("Could not fetch %s", name)
                     continue
 
-                LOGGER.info("Fetched %d listings for %s", len(listings), company.name)
+                LOGGER.info("Fetched %d listings from %s", len(listings), name)
                 for listing in listings:
                     category = normalize_location(
                         listing.location_raw,
@@ -143,6 +123,54 @@ def main(argv: list[str] | None = None) -> int:
         if dashboard is not None:
             print(f"Dashboard: {dashboard}")
     return 0
+
+
+def _sources(
+    companies: list[CompanyConfig], settings: AgentSettings
+) -> list[tuple[str, Callable[[], list[JobListing]]]]:
+    """Every place to read jobs from: company boards, then remote job boards and forums."""
+    fetchers = {
+        "greenhouse": fetch_greenhouse_jobs,
+        "lever": fetch_lever_jobs,
+        "ashby": fetch_ashby_jobs,
+        "smartrecruiters": fetch_smartrecruiters_jobs,
+    }
+    sources: list[tuple[str, Callable[[], list[JobListing]]]] = []
+    for company in companies:
+        fetcher = fetchers.get(company.platform)
+        if fetcher is None:
+            LOGGER.info(
+                "Skipping %s (%s) until its fetcher is available.", company.name, company.platform
+            )
+            continue
+        if company.platform == "smartrecruiters":
+            fetcher = functools.partial(
+                fetcher, include=functools.partial(_worth_describing, settings=settings)
+            )
+        sources.append(
+            (
+                f"{company.platform} board for {company.name}",
+                functools.partial(
+                    fetcher,
+                    company.board or "",
+                    company.name,
+                    max_retries=settings.max_retries,
+                    backoff_seconds=settings.backoff_seconds,
+                ),
+            )
+        )
+    boards: dict[str, Callable[[], list[JobListing]]] = {
+        "weworkremotely": fetch_weworkremotely,
+        "hackernews": functools.partial(
+            fetch_hn_whos_hiring, title_filter=lambda title: title_in_scope(title, settings)
+        ),
+    }
+    for board in settings.remote_boards:
+        if board in boards:
+            sources.append((f"remote board {board}", boards[board]))
+        else:
+            LOGGER.warning("Unknown remote board %r in settings; skipping it.", board)
+    return sources
 
 
 def _worth_describing(listing, *, settings) -> bool:

@@ -10,6 +10,8 @@ import yaml
 from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 
+from agent.seniority import classify_experience
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -51,6 +53,9 @@ class AgentSettings:
     include_new_grad_list: bool = True
     title_keywords: tuple[str, ...] = ()
     title_role_keywords: tuple[str, ...] = ()
+    remote_boards: tuple[str, ...] = ()
+    max_jobs_per_company: int | None = None
+    max_years_experience: int | None = None
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
 
@@ -107,6 +112,17 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
             if str(keyword).strip()
         ),
         title_role_keywords=_keywords(discovery.get("title_role_keywords"), ()),
+        remote_boards=_keywords(discovery.get("remote_boards"), ()),
+        max_years_experience=(
+            int(discovery["max_years_experience"])
+            if discovery.get("max_years_experience") is not None
+            else None
+        ),
+        max_jobs_per_company=(
+            int(discovery["max_jobs_per_company"])
+            if discovery.get("max_jobs_per_company")
+            else None
+        ),
         exclude_title_keywords=_keywords(
             discovery.get("exclude_title_keywords"), DEFAULT_EXCLUDED_TITLES
         ),
@@ -140,6 +156,13 @@ def excluded_role_reason(title: str, description: str, settings: AgentSettings) 
         text, settings.exclude_description_phrases
     ):
         return "Posting is for new graduates (excluded in settings)"
+    limit = settings.max_years_experience
+    if limit is not None:
+        experience = classify_experience(title, description)
+        if experience.min_years is not None and experience.min_years > limit:
+            return f"Requires {experience.min_years}+ years of experience (max {limit})"
+        if experience.level == "mid" and experience.min_years is None:
+            return f"Mid-level role that does not state it needs {limit} years or fewer"
     return None
 
 

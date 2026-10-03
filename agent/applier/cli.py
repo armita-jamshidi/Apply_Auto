@@ -254,6 +254,11 @@ def _dry_run_fit(stored: Job | None, description: str, profile_path: Path) -> Fi
             load_profile(profile_path),
             fit_score_threshold=settings.fit_score_threshold,
             model=settings.anthropic_model,
+            job_posting=(
+                {"title": stored.title, "company": stored.company, "location": stored.location_raw}
+                if stored is not None
+                else None
+            ),
         )
     except Exception as error:
         LOGGER.warning("Could not score dry-run job: %s", error)
@@ -376,6 +381,11 @@ def _prepare_live_application(
                 profile,
                 fit_score_threshold=settings.fit_score_threshold,
                 model=settings.anthropic_model,
+                job_posting={
+                    "title": job.title,
+                    "company": job.company,
+                    "location": job.location_raw,
+                },
             )
             job.fit_score = assessment.score
             job.fit_reasons = assessment.reasons
