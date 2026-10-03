@@ -687,6 +687,7 @@ def test_bot_challenge_stops_before_filling_and_routes_to_manual_review(tmp_path
     assert result.submitted is False
     assert result.answers == {}
     assert "CAPTCHA" in result.field_notes["Application page"]
+    assert result.field_notes["Resume"] == "Not attempted: the application page was blocked."
     assert page.screenshot_path == str(tmp_path / "blocked.png")
     assert page.submitted is False
 
@@ -818,3 +819,27 @@ def test_lever_style_labels_group_choices_and_strip_required_markers(
     assert result.answers["Where are you located?"] is None
     assert "custom widget" in result.field_notes["Where are you located?"]
     assert page.fields["Resume"].uploaded == str(resume)
+
+
+def test_ashby_choice_heading_and_options_become_one_review_row(tmp_path: Path) -> None:
+    profile, resume = create_profile(tmp_path)
+    page = create_complete_page()
+    page.fields["Race"] = FakeField("Race", kind="choice-group", group="Race", linked=False)
+    page.fields["Asian"] = FakeField("Asian", kind="radio", group="Race")
+    page.fields["Hispanic or Latino"] = FakeField("Hispanic or Latino", kind="radio", group="Race")
+
+    result = run_tier1_dry_run(
+        page,
+        create_job("ashby", "https://jobs.ashbyhq.com/sample/job-1"),
+        profile,
+        resume,
+        tmp_path / "filled.png",
+        resume_text="Python engineer.",
+    )
+
+    race_options = {"Race", "Asian", "Hispanic or Latino"}
+    race_rows = [label for label in result.answers if label in race_options]
+    assert race_rows == ["Race"]
+    assert result.field_notes["Race"] == (
+        "Checkbox or radio choices are not automated; choose manually."
+    )

@@ -158,6 +158,7 @@ def run_tier1_dry_run(
             notes["Application page"] = (
                 f"Blocked by {challenge}; complete this application manually in a browser."
             )
+            notes["Resume"] = "Not attempted: the application page was blocked."
             return ApplierResult(
                 "manual_review", answers, str(screenshot_path), None,
                 f"Application page is behind {challenge}.",

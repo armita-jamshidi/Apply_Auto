@@ -24,26 +24,47 @@ from agent.types import JobListing
 
 LOGGER = logging.getLogger(__name__)
 REQUIRED_MARKER = re.compile(r"\s*[*\u2731]+\s*$")
-CHOICE_KINDS = frozenset({"checkbox", "radio"})
+CHOICE_KINDS = frozenset({"checkbox", "radio", "choice-group"})
 CHOICE_GROUP_NOTE = "Checkbox or radio choices are not automated; choose manually."
 NO_CONTROL_NOTE = "No form control is linked to this label (custom widget); answer manually."
 OTHER_UPLOAD_NOTE = "Skipped: file uploads other than the resume are not automated."
-# Reads a label's own text (without nested dropdown options) and what control it labels.
+# Reads a label's visible text (no nested options or hidden error text) and what it labels.
+# A label with no control that heads checkbox/radio options reports kind "choice-group".
 LABEL_INFO_SCRIPT = """label => {
-  const clone = label.cloneNode(true);
-  clone.querySelectorAll('select, option, input, textarea, button').forEach(node => node.remove());
   const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
+  const visibleText = element => {
+    const parts = [];
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const parent = walker.currentNode.parentElement;
+      if (!parent || parent.closest('select, option, button, textarea')) continue;
+      if (parent.checkVisibility && !parent.checkVisibility()) continue;
+      parts.push(walker.currentNode.textContent);
+    }
+    return clean(parts.join(' '));
+  };
+  const choices = 'input[type="checkbox"], input[type="radio"]';
+  const boxOf = node => node.closest(
+    'fieldset, [role="group"], [role="radiogroup"], .application-question'
+  );
+  const text = visibleText(label);
   const control = label.control;
-  const kind = control ? (control.type || control.tagName.toLowerCase()) : null;
-  let group = null;
-  if (control && (kind === 'checkbox' || kind === 'radio')) {
-    const box = control.closest(
-      'fieldset, [role="group"], [role="radiogroup"], .application-question'
-    );
-    const heading = box && box.querySelector('legend, .application-label, .text');
-    group = clean(heading ? heading.textContent : '') || control.name || null;
+  if (!control) {
+    const box = boxOf(label);
+    const headsChoices = box && box.querySelector(choices);
+    return {text, kind: headsChoices ? 'choice-group' : null, group: headsChoices ? text : null};
   }
-  return {text: clean(clone.textContent), kind, group};
+  const kind = control.type || control.tagName.toLowerCase();
+  let group = null;
+  if (kind === 'checkbox' || kind === 'radio') {
+    const box = boxOf(control);
+    const heading = box && (
+      box.querySelector('legend, .application-label, .text')
+      || [...box.querySelectorAll('label')].find(candidate => !candidate.control)
+    );
+    group = (heading && visibleText(heading)) || control.name || null;
+  }
+  return {text, kind, group};
 }"""
 STANDARD_FIELDS = {
     "first name",
