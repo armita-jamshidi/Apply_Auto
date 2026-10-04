@@ -31,7 +31,9 @@ from agent.settings import (
     load_settings,
     title_in_scope,
 )
+from agent.sources.company_apply import BoardCache, find_company_application, links_in
 from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
+from agent.types import FILLABLE_PLATFORMS
 from db.models import Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -75,6 +77,46 @@ def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
         print(f"[removed] {job.company} | {job.title} | {reason}")
     session.commit()
     return removed
+
+
+def resolve_application_links(session: Session, cache: BoardCache | None = None) -> int:
+    """Find the company's own application for open jobs from remote boards; return how many.
+
+    A job found on a supported board becomes that board's job, so its answers can be
+    prepared. Jobs already checked keep their link, so each one is looked up once.
+    """
+    cache = cache or BoardCache()
+    jobs = session.scalars(
+        select(Job).where(
+            Job.platform.not_in(FILLABLE_PLATFORMS),
+            Job.apply_url.is_(None),
+            Job.status.in_(("new", "queued", READY_FOR_YOU, "skipped")),
+        )
+    ).all()
+    found = 0
+    for job in jobs:
+        application = find_company_application(
+            job.company, job.title, links_in(job.description), cache
+        )
+        taken = application is not None and application.platform is not None and (
+            session.scalar(select(Job.id).where(Job.url == application.url)) is not None
+        )
+        if application is None or taken:
+            # Nothing better than the posting (or that job is already listed): remember it.
+            job.apply_url = job.url
+            continue
+        if application.platform is not None:
+            job.platform = application.platform
+            job.url = application.url
+            if application.description:
+                job.description = application.description
+            print(f"[company site] {job.company} | {job.title} | {job.url}")
+        else:
+            job.apply_url = application.url
+            print(f"[company site] {job.company} | {job.title} | {job.apply_url}")
+        found += 1
+    session.commit()
+    return found
 
 
 def cap_jobs_per_company(session: Session, settings: AgentSettings) -> int:
@@ -283,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ensure_schema(engine)
         with create_session_factory(engine)() as session:
+            linked = resolve_application_links(session)
+            if linked:
+                print(f"Found the company's own application for {linked} jobs.")
             removed = remove_out_of_scope_jobs(session, settings)
             if removed:
                 print(f"Removed {removed} jobs outside your target roles.")

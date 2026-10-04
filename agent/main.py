@@ -24,6 +24,7 @@ from agent.settings import (
     load_settings,
     title_in_scope,
 )
+from agent.sources.company_apply import BoardCache, resolve_listing
 from agent.sources.new_grad_list import fetch_new_grad_companies
 from agent.sources.remote_boards import (
     fetch_himalayas,
@@ -77,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_schema(engine)
     session_factory = create_session_factory(engine)
     found_count = 0
+    board_cache = BoardCache()
     try:
         with session_factory() as session:
             for name, fetch in _sources(companies, settings):
@@ -102,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                     level = classify_experience(listing.title, listing.description).level
                     if level not in settings.experience_levels:
                         continue
+                    listing = resolve_listing(listing, board_cache)
                     status = "queued" if ambiguous else "new"
                     try:
                         is_new = persist_job_if_new(session, listing, category, status=status)

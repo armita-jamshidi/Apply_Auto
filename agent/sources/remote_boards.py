@@ -21,6 +21,7 @@ from html import unescape
 import httpx
 
 from agent.fetchers.http import request_json
+from agent.sources.company_apply import links_in
 from agent.types import JobListing
 
 LOGGER = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ def fetch_weworkremotely(client: httpx.Client | None = None) -> list[JobListing]
                 url=link,
                 location_raw=location,
                 description=(item.findtext("description") or "").strip(),
+                links=tuple(links_in(item.findtext("description") or "")),
             )
         )
     return listings
@@ -180,6 +182,7 @@ def _hn_listing(
         url=f"https://news.ycombinator.com/item?id={comment_id}",
         location_raw=location[:500],
         description=description.strip(),
+        links=tuple(links_in(html)),
     )
 
 

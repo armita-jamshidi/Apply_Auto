@@ -28,6 +28,8 @@ class Job(Base):
     company: Mapped[str] = mapped_column(String(200), nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # The company's own careers or apply page for jobs not on a fillable board.
+    apply_url: Mapped[str | None] = mapped_column(String(2048))
     location_raw: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     location_category: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")

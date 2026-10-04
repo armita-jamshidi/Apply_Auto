@@ -218,6 +218,7 @@ def persist_job_if_new(
             company=listing.company,
             title=listing.title,
             url=listing.url,
+            apply_url=listing.apply_url,
             location_raw=listing.location_raw,
             location_category=location_category,
             description=listing.description,

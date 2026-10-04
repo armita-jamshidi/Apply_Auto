@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 LocationCategory = Literal["remote_us", "nc", "other"]
+# Applicant tracking systems whose forms the applier can fill.
+FILLABLE_PLATFORMS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,3 +19,7 @@ class JobListing:
     url: str
     location_raw: str
     description: str
+    # Links found in the posting, used to find the company's own application.
+    links: tuple[str, ...] = ()
+    # The company's own careers or apply page, when the job is not on a fillable board.
+    apply_url: str | None = None

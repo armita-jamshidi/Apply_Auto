@@ -16,10 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
 from agent.settings import PROJECT_ROOT, load_settings
 from agent.tracking import REMOVED, mark_job
+from agent.types import FILLABLE_PLATFORMS
 from db.models import Application, Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -28,8 +30,6 @@ DASHBOARD_PATH = PROJECT_ROOT / "dashboard.html"
 LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 REVIEWS_DIR = PROJECT_ROOT / "reviews"
 DEFAULT_PORT = 8765
-# Platforms whose forms the applier can fill; other sources link to the posting only.
-FILLABLE_PLATFORMS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
 # Display order, label, and job.status values for each dashboard group.
 GROUPS = (
     ("ready", "Ready for you", {"manual_review"}),
@@ -181,6 +181,7 @@ thead th {{ border-top: 0; color: var(--muted); font-weight: 600; font-size: 0.8
 .skipped {{ color: var(--skipped); }}
 .warn {{ color: var(--ready); font-size: 0.85rem; }}
 .links a {{ margin-right: 10px; white-space: nowrap; }}
+.apply-link {{ font-weight: 600; }}
 details summary {{ cursor: pointer; color: var(--accent); }}
 pre {{
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; padding: 8px 10px;
@@ -425,7 +426,10 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         "applied": "Applied",
         "skipped": "Skipped",
     }.get(row.group, "Filled" if row.latest else "Found")
-    links = [f"<a href='{escape(job.url)}'>Posting</a>"]
+    apply = application_link(job)
+    links = [f"<a href='{escape(apply)}' class='apply-link'>Apply</a>"]
+    if apply != job.url:
+        links.append(f"<a href='{escape(job.url)}'>Posting</a>")
     if row.latest and row.latest.review_path:
         review = Path(row.latest.review_path)
         if review.is_file():
@@ -479,6 +483,15 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"<tr class='detail' id='{detail_id}' hidden><td colspan='8'>"
         f"{_detail_html(row, fields)}</td></tr>"
     )
+
+
+def application_link(job: Job) -> str:
+    """The company's own application page when known, else the posting itself."""
+    if job.apply_url:
+        return job.apply_url
+    if job.platform in FILLABLE_PLATFORMS:
+        return application_urls(job.platform, job.url)[1] or job.url
+    return job.url
 
 
 def _match_html(score: int | None, threshold: int) -> str:
