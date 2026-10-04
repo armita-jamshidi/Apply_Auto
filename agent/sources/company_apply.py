@@ -123,6 +123,8 @@ class CompanyApplication:
     url: str
     platform: str | None = None
     description: str = ""
+    # The company's own page for a board job hosted on the company's site, if different.
+    apply_url: str | None = None
 
 
 class BoardCache:
@@ -181,7 +183,10 @@ def find_company_application(
             if titles_match(title, job.title):
                 fillable = platform in FILLABLE_PLATFORMS
                 return CompanyApplication(
-                    job.url, platform if fillable else None, job.description if fillable else ""
+                    job.url,
+                    platform if fillable else None,
+                    job.description if fillable else "",
+                    job.apply_url if fillable else None,
                 )
 
     for link in links:
@@ -210,7 +215,7 @@ def resolve_listing(listing: JobListing, cache: BoardCache) -> JobListing:
             platform=found.platform,
             url=found.url,
             description=found.description or listing.description,
-            apply_url=None,
+            apply_url=found.apply_url,
         )
     return replace(listing, apply_url=found.url)
 

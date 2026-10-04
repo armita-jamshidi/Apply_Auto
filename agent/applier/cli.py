@@ -37,17 +37,12 @@ from agent.safeguards import live_application_block_reason
 from agent.scorer import score_job
 from agent.settings import PROJECT_ROOT, load_settings
 from agent.tracking import mark_job, qualification_problem, record_attempt
-from agent.types import JobListing
+from agent.types import FILLABLE_HOSTS, JobListing
 from db.models import Application, Job, utc_now
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
 LOGGER = logging.getLogger(__name__)
-PLATFORM_HOSTS = {
-    "greenhouse": ("greenhouse.io",),
-    "lever": ("jobs.lever.co", "jobs.eu.lever.co"),
-    "ashby": ("jobs.ashbyhq.com",),
-    "smartrecruiters": ("jobs.smartrecruiters.com",),
-}
+PLATFORM_HOSTS = FILLABLE_HOSTS
 # Hand-off browser profile: keeps the logins people make in that window between runs.
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".playwright" / "profile"
 HUMAN_CHALLENGE_WAIT_MS = 10 * 60 * 1000

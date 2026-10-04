@@ -129,3 +129,90 @@ def test_cleanup_removes_stale_jobs_and_dashboard_shows_posted(session: Session,
     html = page.read_text(encoding="utf-8")
     assert "<th>Posted</th>" in html
     assert "3 days ago" in html
+
+
+def test_company_hosted_greenhouse_jobs_keep_the_company_page_to_apply() -> None:
+    import httpx
+
+    from agent.fetchers.greenhouse import fetch_greenhouse_jobs
+
+    payload = {
+        "jobs": [
+            {"id": 7, "title": "AI Engineer", "absolute_url": "https://acme.com/careers?gh_jid=7"},
+            {
+                "id": 8,
+                "title": "ML Engineer",
+                "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/8",
+            },
+        ]
+    }
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, json=payload))
+    client = httpx.Client(transport=transport)
+
+    hosted, plain = fetch_greenhouse_jobs("acme", "Acme", client=client)
+
+    assert hosted.url == "https://job-boards.greenhouse.io/acme/jobs/7"
+    assert hosted.apply_url == "https://acme.com/careers?gh_jid=7"
+    assert (plain.url, plain.apply_url) == ("https://job-boards.greenhouse.io/acme/jobs/8", None)
+
+
+def test_rediscovery_repairs_a_stored_company_page_link(session: Session, tmp_path) -> None:
+    old = Job(
+        source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
+        url="https://acme.com/careers?gh_jid=7", location_raw="Remote - US",
+        location_category="remote_us", description="d", status="new", fit_score=88,
+    )
+    session.add(old)
+    session.flush()
+    fresh = JobListing(
+        "greenhouse", "greenhouse", "Acme", "AI Engineer",
+        "https://job-boards.greenhouse.io/acme/jobs/7", "Remote - US", "d",
+        apply_url="https://acme.com/careers?gh_jid=7",
+    )
+
+    assert not persist_job_if_new(session, fresh, "remote_us")
+
+    assert old.url == "https://job-boards.greenhouse.io/acme/jobs/7"
+    assert old.apply_url == "https://acme.com/careers?gh_jid=7"
+    assert pipeline.jobs_to_prepare(session, load_settings(), limit=5) == [old]
+    page = tmp_path / "dashboard.html"
+    dashboard.write_dashboard(session, page, fit_threshold=70)
+    html = page.read_text(encoding="utf-8")
+    assert "href='https://acme.com/careers?gh_jid=7' class='apply-link'" in html
+    assert "--job-url &quot;https://job-boards.greenhouse.io/acme/jobs/7&quot;" in html
+
+
+def test_jobs_off_their_platform_host_are_not_prepared(session: Session) -> None:
+    job = Job(
+        source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
+        url="https://acme.com/careers?gh_jid=9", location_raw="Remote - US",
+        location_category="remote_us", description="d", status="new", fit_score=95,
+    )
+    session.add(job)
+    session.flush()
+
+    assert pipeline.jobs_to_prepare(session, load_settings(), limit=5) == []
+
+
+def test_same_role_handles_wildcard_titles_and_company_suffixes(session: Session) -> None:
+    assert persist_job_if_new(session, listing("https://x/1", "Acme", "%AI Engineer"), "remote_us")
+    assert persist_job_if_new(session, listing("https://x/2", "Acme", "_ML Engineer"), "remote_us")
+    assert not persist_job_if_new(
+        session, listing("https://x/3", "Acme, Inc.", "%AI Engineer"), "remote_us"
+    )
+    assert session.query(Job).count() == 2
+
+
+def test_cap_treats_company_suffixes_as_the_same_company(session: Session) -> None:
+    for index, company in enumerate(["Direct Supply, Inc.", "Direct Supply", "direct supply"]):
+        session.add(
+            Job(
+                source="lever", platform="lever", company=company, title=f"AI Engineer {index}",
+                url=f"https://jobs.lever.co/ds/{index}", location_raw="Remote - US",
+                location_category="remote_us", description="d", status="new",
+                fit_score=90 - index,
+            )
+        )
+    session.flush()
+
+    assert pipeline.cap_jobs_per_company(session, load_settings()) == 1

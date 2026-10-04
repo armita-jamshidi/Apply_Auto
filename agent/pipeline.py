@@ -21,7 +21,7 @@ from agent.applier.greenhouse import load_profile
 from agent.applier.review import FitSummary
 from agent.dashboard import DEFAULT_PORT, refresh_dashboard
 from agent.dashboard import serve as serve_dashboard
-from agent.filters import is_ambiguous_location, normalize_location
+from agent.filters import company_key, is_ambiguous_location, normalize_location
 from agent.main import main as discover
 from agent.scorer import FitAssessment, score_job
 from agent.settings import (
@@ -34,7 +34,7 @@ from agent.settings import (
 )
 from agent.sources.company_apply import BoardCache, find_company_application, links_in
 from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
-from agent.types import FILLABLE_PLATFORMS
+from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -113,6 +113,7 @@ def resolve_application_links(session: Session, cache: BoardCache | None = None)
         if application.platform is not None:
             job.platform = application.platform
             job.url = application.url
+            job.apply_url = application.apply_url
             if application.description:
                 job.description = application.description
             print(f"[company site] {job.company} | {job.title} | {job.url}")
@@ -139,7 +140,7 @@ def cap_jobs_per_company(session: Session, settings: AgentSettings) -> int:
     ).all()
     by_company: dict[str, list[Job]] = {}
     for job in jobs:
-        by_company.setdefault(" ".join(job.company.casefold().split()), []).append(job)
+        by_company.setdefault(company_key(job.company), []).append(job)
     removed = 0
     for group in by_company.values():
         group.sort(
@@ -247,6 +248,7 @@ def jobs_to_prepare(session: Session, settings: AgentSettings, *, limit: int) ->
         and job.fit_recommendation in (None, "apply")
         and excluded_role_reason(job.title, job.description, settings) is None
         and title_in_scope(job.title, settings)
+        and is_fillable(job.platform, job.url)
     ]
     return ready[:limit]
 

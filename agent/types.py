@@ -3,10 +3,26 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlsplit
 
 LocationCategory = Literal["remote_us", "nc", "other"]
-# Applicant tracking systems whose forms the applier can fill.
-FILLABLE_PLATFORMS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
+# Applicant tracking systems whose forms the applier can fill, and the hosts it accepts.
+FILLABLE_HOSTS = {
+    "greenhouse": ("greenhouse.io",),
+    "lever": ("jobs.lever.co", "jobs.eu.lever.co"),
+    "ashby": ("jobs.ashbyhq.com",),
+    "smartrecruiters": ("jobs.smartrecruiters.com",),
+}
+FILLABLE_PLATFORMS = frozenset(FILLABLE_HOSTS)
+
+
+def is_fillable(platform: str, url: str) -> bool:
+    """Whether the applier can open this job's form: a supported platform on its own host."""
+    host = (urlsplit(url).hostname or "").casefold()
+    return url.startswith("https://") and any(
+        host == allowed or host.endswith("." + allowed)
+        for allowed in FILLABLE_HOSTS.get(platform, ())
+    )
 
 
 @dataclass(frozen=True, slots=True)

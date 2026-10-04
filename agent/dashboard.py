@@ -21,7 +21,7 @@ from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
 from agent.settings import PROJECT_ROOT, load_settings
 from agent.tracking import REMOVED, mark_job
-from agent.types import FILLABLE_PLATFORMS
+from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Application, Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
 
@@ -458,7 +458,7 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
     finish = ""
-    if row.group in {"ready", "new", "location"} and job.platform in FILLABLE_PLATFORMS:
+    if row.group in {"ready", "new", "location"} and is_fillable(job.platform, job.url):
         command = hand_off_command(job.platform, job.url, job.company, job.title)
         finish = f"<details><summary>Finish</summary><pre>{escape(command)}</pre></details>"
     search_text = escape(f"{job.company} {job.title} {job.location_raw}".casefold())
@@ -665,6 +665,13 @@ def make_handler(
             self._json(404, {"error": "Not found"})
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
+            # Read the body before any reply: answering with unread data left in the socket
+            # makes Windows reset the connection, so the browser never sees the response.
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            body = self.rfile.read(length) if length > 0 else b""
             if not self._trusted():
                 return
             match = re.fullmatch(r"/jobs/(\d+)/status", self.path)
@@ -674,8 +681,7 @@ def make_handler(
                 self._json(404, {"error": "Not found"})
                 return
             try:
-                length = int(self.headers.get("Content-Length") or 0)
-                status = json.loads(self.rfile.read(length) or b"{}").get("status")
+                status = json.loads(body or b"{}").get("status")
             except (ValueError, AttributeError):
                 self._json(400, {"error": "Expected JSON with a status"})
                 return

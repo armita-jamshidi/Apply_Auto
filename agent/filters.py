@@ -217,6 +217,15 @@ def persist_job_if_new(
     if existing is not None:
         if existing.posted_at is None and listing.posted_at is not None:
             existing.posted_at = listing.posted_at
+        if (
+            existing.url != listing.url
+            and existing.platform == listing.platform
+            and listing.apply_url is not None
+            and existing.url == listing.apply_url
+        ):
+            # Stored before company-hosted Greenhouse pages were split from the board link.
+            existing.url = listing.url
+            existing.apply_url = listing.apply_url
         return False
     experience = classify_experience(listing.title, listing.description)
 
@@ -245,7 +254,10 @@ def same_role(session: Session, company: str, title: str) -> Job | None:
     """A stored job with the same title at the same company, ignoring case and punctuation."""
     wanted_company = company_key(company)
     wanted_title = _words(title)
-    for job in session.scalars(select(Job).where(Job.title.ilike(title.strip()[:1] + "%"))):
+    # Only the first character narrows the query; escape it in case it is a LIKE wildcard.
+    first = title.strip()[:1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    candidates = select(Job).where(Job.title.ilike(first + "%", escape="\\"))
+    for job in session.scalars(candidates):
         if _words(job.title) == wanted_title and company_key(job.company) == wanted_company:
             return job
     return None

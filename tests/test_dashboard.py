@@ -152,7 +152,12 @@ def test_mark_job_rejects_unknown_jobs_and_statuses(session: Session) -> None:
 def test_dashboard_orders_groups_and_links_next_steps(session: Session, tmp_path: Path) -> None:
     review = tmp_path / "review.html"
     review.write_text("review", encoding="utf-8")
-    ready = add_job(session, "https://example.com/ready", status="manual_review", fit_score=70)
+    ready = add_job(
+        session,
+        "https://job-boards.greenhouse.io/example/jobs/1",
+        status="manual_review",
+        fit_score=70,
+    )
     session.add(Application(job_id=ready.id, mode="hand_off", answers={}, review_path=str(review)))
     add_job(session, "https://example.com/new-low", fit_score=40, company="Low")
     add_job(
