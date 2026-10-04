@@ -29,6 +29,7 @@ from agent.settings import (
     AgentSettings,
     excluded_role_reason,
     load_settings,
+    stale_posting_reason,
     title_in_scope,
 )
 from agent.sources.company_apply import BoardCache, find_company_application, links_in
@@ -49,7 +50,8 @@ Runner = Callable[[list[str]], int]
 def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     """Remove found jobs the current settings rule out; return how many.
 
-    That is internships, co-ops, new-grad roles, titles outside the wanted roles
+    That is internships, co-ops, new-grad roles, postings older than max_posting_age_days,
+    titles outside the wanted roles
     (title_keywords and title_role_keywords), and locations outside North Carolina or US
     remote. Applied, prepared, and already removed jobs are left alone. Removed jobs are
     hidden, and discovery does not add them back.
@@ -60,6 +62,8 @@ def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     removed = 0
     for job in jobs:
         reason = excluded_role_reason(job.title, job.description, settings)
+        if reason is None:
+            reason = stale_posting_reason(job.posted_at, settings)
         if reason is None and not title_in_scope(job.title, settings):
             reason = "Not an AI or agent engineering role"
         if (
@@ -104,6 +108,7 @@ def resolve_application_links(session: Session, cache: BoardCache | None = None)
         if application is None or taken:
             # Nothing better than the posting (or that job is already listed): remember it.
             job.apply_url = job.url
+            session.commit()
             continue
         if application.platform is not None:
             job.platform = application.platform
@@ -115,6 +120,7 @@ def resolve_application_links(session: Session, cache: BoardCache | None = None)
             job.apply_url = application.url
             print(f"[company site] {job.company} | {job.title} | {job.apply_url}")
         found += 1
+        session.commit()
     session.commit()
     return found
 

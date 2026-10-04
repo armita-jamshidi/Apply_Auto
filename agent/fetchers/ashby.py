@@ -7,7 +7,7 @@ import httpx
 
 from agent.types import JobListing
 
-from .http import label_remote, request_json
+from .http import label_remote, parse_posted, request_json
 
 LOGGER = logging.getLogger(__name__)
 ASHBY_JOBS_URL = "https://api.ashbyhq.com/posting-api/job-board/{board}"
@@ -59,6 +59,7 @@ def fetch_ashby_jobs(
                         or str(item.get("workplaceType", "")).casefold() == "remote",
                     ),
                     description=str(description).strip(),
+                    posted_at=parse_posted(item.get("publishedAt")),
                 )
             )
         except (AttributeError, KeyError, TypeError) as error:

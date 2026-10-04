@@ -205,9 +205,18 @@ def persist_job_if_new(
     *,
     status: str = "new",
 ) -> bool:
-    """Persist a listing unless a job with its URL is already present."""
-    exists = session.scalar(select(Job.id).where(Job.url == listing.url))
-    if exists is not None:
+    """Persist a listing unless the same job is already stored; return whether it was added.
+
+    The same job is one with the same URL, or the same title at the same company: a role
+    seen on several boards, or a board job whose stored link was later changed to the
+    company's own application. A stored job missing its posting date gets this one's.
+    """
+    existing = session.scalar(select(Job).where(Job.url == listing.url)) or same_role(
+        session, listing.company, listing.title
+    )
+    if existing is not None:
+        if existing.posted_at is None and listing.posted_at is not None:
+            existing.posted_at = listing.posted_at
         return False
     experience = classify_experience(listing.title, listing.description)
 
@@ -222,6 +231,7 @@ def persist_job_if_new(
             location_raw=listing.location_raw,
             location_category=location_category,
             description=listing.description,
+            posted_at=listing.posted_at,
             status=status,
             experience_level=experience.level,
             min_years_experience=experience.min_years,
@@ -229,3 +239,27 @@ def persist_job_if_new(
     )
     session.flush()
     return True
+
+
+def same_role(session: Session, company: str, title: str) -> Job | None:
+    """A stored job with the same title at the same company, ignoring case and punctuation."""
+    wanted_company = company_key(company)
+    wanted_title = _words(title)
+    for job in session.scalars(select(Job).where(Job.title.ilike(title.strip()[:1] + "%"))):
+        if _words(job.title) == wanted_title and company_key(job.company) == wanted_company:
+            return job
+    return None
+
+
+def company_key(company: str) -> str:
+    """A company name without case, punctuation, or suffixes such as Inc. or LLC."""
+    name = re.sub(
+        r"\b(?:inc|incorporated|llc|ltd|limited|corp|corporation|co|company|plc|gmbh)\b\.?",
+        " ",
+        company.casefold(),
+    )
+    return _words(name)
+
+
+def _words(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))

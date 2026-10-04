@@ -9,7 +9,7 @@ import httpx
 
 from agent.types import JobListing
 
-from .http import label_remote, request_json
+from .http import label_remote, parse_posted, request_json
 
 LOGGER = logging.getLogger(__name__)
 SMARTRECRUITERS_POSTINGS_URL = "https://api.smartrecruiters.com/v1/companies/{company_id}/postings"
@@ -70,6 +70,7 @@ def fetch_smartrecruiters_jobs(
                             ", ".join(location_parts), location.get("remote") is True
                         ),
                         description="",
+                        posted_at=parse_posted(item.get("releasedDate")),
                     )
                     if include is not None and not include(listing):
                         continue
@@ -89,6 +90,7 @@ def fetch_smartrecruiters_jobs(
                             url=listing.url,
                             location_raw=listing.location_raw,
                             description=description,
+                            posted_at=listing.posted_at,
                         )
                     )
                 except (AttributeError, KeyError, TypeError) as error:

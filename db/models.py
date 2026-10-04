@@ -33,6 +33,8 @@ class Job(Base):
     location_raw: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     location_category: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # When the employer published the posting, if the source says.
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fit_score: Mapped[int | None] = mapped_column(Integer)
     fit_reasons: Mapped[list[str] | None] = mapped_column(JSON)
     dealbreakers: Mapped[list[str] | None] = mapped_column(JSON)

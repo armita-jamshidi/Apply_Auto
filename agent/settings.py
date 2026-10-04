@@ -3,6 +3,7 @@
 import os
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,7 @@ class AgentSettings:
     remote_boards: tuple[str, ...] = ()
     max_jobs_per_company: int | None = None
     max_years_experience: int | None = None
+    max_posting_age_days: int | None = None
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
 
@@ -113,6 +115,11 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         ),
         title_role_keywords=_keywords(discovery.get("title_role_keywords"), ()),
         remote_boards=_keywords(discovery.get("remote_boards"), ()),
+        max_posting_age_days=(
+            int(discovery["max_posting_age_days"])
+            if discovery.get("max_posting_age_days")
+            else None
+        ),
         max_years_experience=(
             int(discovery["max_years_experience"])
             if discovery.get("max_years_experience") is not None
@@ -143,6 +150,17 @@ def title_in_scope(title: str, settings: AgentSettings) -> bool:
     return title_matches(title, settings.title_keywords) and title_matches(
         title, settings.title_role_keywords
     )
+
+
+def stale_posting_reason(posted_at: datetime | None, settings: AgentSettings) -> str | None:
+    """Why a posting is too old to keep, or None when it is recent or its date is unknown."""
+    limit = settings.max_posting_age_days
+    if limit is None or posted_at is None:
+        return None
+    if posted_at.tzinfo is None:
+        posted_at = posted_at.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - posted_at).days
+    return f"Posted {age} days ago (older than {limit} days)" if age > limit else None
 
 
 def excluded_role_reason(title: str, description: str, settings: AgentSettings) -> str | None:

@@ -9,7 +9,7 @@ import httpx
 
 from agent.types import JobListing
 
-from .http import label_remote, request_json
+from .http import label_remote, parse_posted, request_json
 
 LOGGER = logging.getLogger(__name__)
 LEVER_POSTINGS_URL = "https://api.lever.co/v0/postings/{site}"
@@ -58,6 +58,7 @@ def fetch_lever_jobs(
                         location, str(item.get("workplaceType", "")).casefold() == "remote"
                     ),
                     description=str(description).strip(),
+                    posted_at=parse_posted(item.get("createdAt")),
                 )
             )
         except (AttributeError, KeyError, TypeError) as error:

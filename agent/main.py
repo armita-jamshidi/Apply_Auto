@@ -22,6 +22,7 @@ from agent.settings import (
     excluded_role_reason,
     load_companies,
     load_settings,
+    stale_posting_reason,
     title_in_scope,
 )
 from agent.sources.company_apply import BoardCache, resolve_listing
@@ -100,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
                     if not title_in_scope(listing.title, settings):
                         continue
                     if excluded_role_reason(listing.title, listing.description, settings):
+                        continue
+                    if stale_posting_reason(listing.posted_at, settings):
                         continue
                     level = classify_experience(listing.title, listing.description).level
                     if level not in settings.experience_levels:

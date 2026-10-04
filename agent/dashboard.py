@@ -100,7 +100,7 @@ def write_dashboard(
         for key, label, _ in GROUPS
     )
     body = "\n".join(_row_html(row, fit_threshold) for row in rows) or (
-        "<tr><td colspan='8' class='muted'>No jobs yet. Run discovery: "
+        "<tr><td colspan='9' class='muted'>No jobs yet. Run discovery: "
         "<code>python -m agent.main</code></td></tr>"
     )
     stats = (
@@ -182,6 +182,7 @@ thead th {{ border-top: 0; color: var(--muted); font-weight: 600; font-size: 0.8
 .warn {{ color: var(--ready); font-size: 0.85rem; }}
 .links a {{ margin-right: 10px; white-space: nowrap; }}
 .apply-link {{ font-weight: 600; }}
+.posted {{ white-space: nowrap; }}
 details summary {{ cursor: pointer; color: var(--accent); }}
 pre {{
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; padding: 8px 10px;
@@ -254,7 +255,7 @@ the page it opens.</p>
 </div>
 <div class="panel table-wrap">
 <table>
-<thead><tr><th>Status</th><th>Company</th><th>Role</th><th>Level</th><th>Location</th>
+<thead><tr><th>Status</th><th>Company</th><th>Role</th><th>Level</th><th>Location</th><th>Posted</th>
 <th>Match</th>
 <th>Last activity</th><th>Next step</th></tr></thead>
 <tbody id="jobs">
@@ -476,11 +477,12 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"aria-controls='{detail_id}'>Details</button></div></td>"
         f"<td>{escape(_level(job))}</td>"
         f"<td>{escape(job.location_raw or '')}</td>"
+        f"<td>{_posted_html(job.posted_at)}</td>"
         f"<td>{_match_html(job.fit_score, fit_threshold)}</td>"
         f"<td>{escape(activity)} {escape(_format_date(when))}</td>"
         f"<td class='links'>{''.join(links)}{answered}{controls}{finish}</td>"
         "</tr>\n"
-        f"<tr class='detail' id='{detail_id}' hidden><td colspan='8'>"
+        f"<tr class='detail' id='{detail_id}' hidden><td colspan='9'>"
         f"{_detail_html(row, fields)}</td></tr>"
     )
 
@@ -492,6 +494,17 @@ def application_link(job: Job) -> str:
     if job.platform in FILLABLE_PLATFORMS:
         return application_urls(job.platform, job.url)[1] or job.url
     return job.url
+
+
+def _posted_html(posted_at: datetime | None) -> str:
+    if posted_at is None:
+        return "<span class='muted'>unknown</span>"
+    days = max(0, (datetime.now(UTC) - _aware(posted_at)).days)
+    age = "today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+    return (
+        f"<span class='posted'>{escape(_format_date(posted_at))}</span>"
+        f"<div class='muted'>{age}</div>"
+    )
 
 
 def _match_html(score: int | None, threshold: int) -> str:

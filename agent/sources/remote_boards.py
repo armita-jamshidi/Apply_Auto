@@ -16,11 +16,12 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from dataclasses import replace
 from html import unescape
 
 import httpx
 
-from agent.fetchers.http import request_json
+from agent.fetchers.http import parse_posted, request_json
 from agent.sources.company_apply import links_in
 from agent.types import JobListing
 
@@ -94,6 +95,7 @@ def fetch_weworkremotely(client: httpx.Client | None = None) -> list[JobListing]
                 location_raw=location,
                 description=(item.findtext("description") or "").strip(),
                 links=tuple(links_in(item.findtext("description") or "")),
+                posted_at=parse_posted(item.findtext("pubDate")),
             )
         )
     return listings
@@ -145,7 +147,8 @@ def fetch_hn_whos_hiring(
         text = comment.get("text") or ""
         listing = _hn_listing(comment.get("id"), text, title_filter)
         if listing is not None:
-            listings.append(listing)
+            posted = parse_posted(comment.get("created_at_i") or comment.get("created_at"))
+            listings.append(replace(listing, posted_at=posted))
     return listings
 
 
@@ -248,6 +251,7 @@ def _himalayas_listing(
         url=url,
         location_raw=location[:500],
         description=str(job.get("description") or job.get("excerpt") or "").strip(),
+        posted_at=parse_posted(job.get("pubDate")),
     )
 
 

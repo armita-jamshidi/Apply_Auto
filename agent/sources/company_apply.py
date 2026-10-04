@@ -17,9 +17,12 @@ and its answers prepared. No site is logged into, and pages behind sign-ins are 
 import logging
 import re
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from html import unescape
 from urllib.parse import parse_qs, urlsplit
+
+import httpx
 
 from agent.fetchers.ashby import fetch_ashby_jobs
 from agent.fetchers.greenhouse import fetch_greenhouse_jobs
@@ -29,10 +32,74 @@ from agent.types import FILLABLE_PLATFORMS, JobListing
 
 LOGGER = logging.getLogger(__name__)
 BoardFetcher = Callable[..., list[JobListing]]
+USER_AGENT = "job-agent/0.1 (personal job search)"
+
+
+TitleReader = Callable[[dict, str], list[tuple[str, str]]]
+
+
+def _light_fetcher(platform: str, url: str, read: TitleReader) -> BoardFetcher:
+    """A board fetcher that lists titles and job pages only (no descriptions)."""
+
+    def fetch(board: str, company: str, **_kwargs) -> list[JobListing]:
+        response = httpx.get(
+            url.format(board=board), timeout=15, headers={"User-Agent": USER_AGENT}
+        )
+        content_type = response.headers.get("content-type", "")
+        if response.status_code != 200 or "json" not in content_type:
+            return []
+        return [
+            JobListing(platform, platform, company, title, link, "", "")
+            for title, link in read(response.json(), board)
+            if title and link
+        ]
+
+    return fetch
+
+
+def _smartrecruiters_titles(data: dict, board: str) -> list[tuple[str, str]]:
+    return [
+        (item.get("name", ""), f"https://jobs.smartrecruiters.com/{board}/{item.get('id', '')}")
+        for item in data.get("content", [])
+    ]
+
+
+def _workable_titles(data: dict, _board: str) -> list[tuple[str, str]]:
+    return [(item.get("title", ""), item.get("url", "")) for item in data.get("jobs", [])]
+
+
+def _recruitee_titles(data: dict, _board: str) -> list[tuple[str, str]]:
+    return [(item.get("title", ""), item.get("careers_url", "")) for item in data.get("offers", [])]
+
+
+def _bamboohr_titles(data: dict, board: str) -> list[tuple[str, str]]:
+    return [
+        (item.get("jobOpeningName", ""), f"https://{board}.bamboohr.com/careers/{item['id']}")
+        for item in data.get("result", [])
+        if item.get("id")
+    ]
+
+
 BOARD_FETCHERS: dict[str, BoardFetcher] = {
     "greenhouse": fetch_greenhouse_jobs,
     "lever": fetch_lever_jobs,
     "ashby": fetch_ashby_jobs,
+    # Titles only: SmartRecruiters' own fetcher reads every description, which is slow.
+    "smartrecruiters": _light_fetcher(
+        "smartrecruiters",
+        "https://api.smartrecruiters.com/v1/companies/{board}/postings?limit=100",
+        _smartrecruiters_titles,
+    ),
+    # These careers sites cannot be filled; a match links to the company's own job page.
+    "workable": _light_fetcher(
+        "workable", "https://apply.workable.com/api/v1/widget/accounts/{board}", _workable_titles
+    ),
+    "recruitee": _light_fetcher(
+        "recruitee", "https://{board}.recruitee.com/api/offers/", _recruitee_titles
+    ),
+    "bamboohr": _light_fetcher(
+        "bamboohr", "https://{board}.bamboohr.com/careers/list", _bamboohr_titles
+    ),
 }
 _URL = re.compile(r"""https?://[^\s"'<>)\]]+""", re.IGNORECASE)
 _CAREERS_LINK = re.compile(r"\b(?:careers?|jobs?|apply|join|hiring|work-with-us)\b", re.I)
@@ -64,6 +131,14 @@ class BoardCache:
     def __init__(self, fetchers: dict[str, BoardFetcher] | None = None) -> None:
         self.fetchers = fetchers or BOARD_FETCHERS
         self._boards: dict[tuple[str, str], list[JobListing]] = {}
+
+    def prefetch(self, boards: Iterable[tuple[str, str]]) -> None:
+        """Fetch several boards at once; each lookup is a separate public API request."""
+        missing = list(
+            dict.fromkeys(b for b in boards if (b[0], b[1].casefold()) not in self._boards)
+        )
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            list(pool.map(lambda board: self.jobs(*board), missing))
 
     def jobs(self, platform: str, board: str) -> list[JobListing]:
         key = (platform, board.casefold())
@@ -99,11 +174,15 @@ def find_company_application(
         if job_url is not None:
             return CompanyApplication(job_url[1], job_url[0])
 
-    wanted = _normalize_title(title)
-    for platform, board in _candidate_boards(company, links):
+    boards = _candidate_boards(company, links)
+    cache.prefetch(boards)
+    for platform, board in boards:
         for job in cache.jobs(platform, board):
-            if _normalize_title(job.title) == wanted:
-                return CompanyApplication(job.url, platform, job.description)
+            if titles_match(title, job.title):
+                fillable = platform in FILLABLE_PLATFORMS
+                return CompanyApplication(
+                    job.url, platform if fillable else None, job.description if fillable else ""
+                )
 
     for link in links:
         host = (urlsplit(link).hostname or "").casefold()
@@ -191,5 +270,31 @@ def _is_aggregator(host: str) -> bool:
     )
 
 
-def _normalize_title(title: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", title.casefold()))
+# Words that describe where or how a job is worked, not which job it is.
+_TITLE_NOISE = frozenset(
+    "remote fully worldwide anywhere global hybrid us usa contract contractor full part time "
+    "ft pt opportunity position role opening the a an and of for 100".split()
+)
+_LEVELS = frozenset({"i", "ii", "iii", "iv", "v", "1", "2", "3", "4"})
+
+
+def titles_match(posted: str, listed: str) -> bool:
+    """Whether two titles name the same job.
+
+    Word order, case, punctuation, parenthetical notes such as "(100% Remote)", text after
+    " | ", and work-mode words are ignored. Every other word must match, so "Agent Engineer"
+    is not "Senior Agent Engineer". A title listing several levels ("Engineer II/III")
+    matches one of them ("Engineer III").
+    """
+    wanted, found = _title_words(posted), _title_words(listed)
+    if not wanted or not found:
+        return False
+    if wanted == found:
+        return True
+    extra = wanted - found
+    return found < wanted and extra <= _LEVELS and bool(found & _LEVELS)
+
+
+def _title_words(title: str) -> frozenset[str]:
+    core = re.sub(r"[(\[].*?[)\]]", " ", title.split(" | ")[0].casefold())
+    return frozenset(word for word in re.findall(r"[a-z0-9]+", core) if word not in _TITLE_NOISE)

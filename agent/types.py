@@ -1,6 +1,7 @@
 """Shared typed values used by job sources and filters."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 LocationCategory = Literal["remote_us", "nc", "other"]
@@ -23,3 +24,5 @@ class JobListing:
     links: tuple[str, ...] = ()
     # The company's own careers or apply page, when the job is not on a fillable board.
     apply_url: str | None = None
+    # When the employer published the posting, if the source says.
+    posted_at: datetime | None = None

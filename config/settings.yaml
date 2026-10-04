@@ -19,6 +19,8 @@ discovery:
   remote_boards: [weworkremotely, hackernews, himalayas]
   # Keep at most this many open jobs per company, the best fit scores first.
   max_jobs_per_company: 2
+  # Skip postings published more than this many days ago (jobs with no date are kept).
+  max_posting_age_days: 60
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
   # Never keep internships, co-ops, or new-grad roles (matched in titles), or postings that

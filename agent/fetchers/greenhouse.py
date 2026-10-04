@@ -7,7 +7,7 @@ import httpx
 
 from agent.types import JobListing
 
-from .http import request_json
+from .http import parse_posted, request_json
 
 LOGGER = logging.getLogger(__name__)
 GREENHOUSE_JOBS_URL = "https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs"
@@ -54,6 +54,9 @@ def fetch_greenhouse_jobs(
                     url=str(raw_job["absolute_url"]).strip(),
                     location_raw=str(location.get("name", "")).strip(),
                     description=str(raw_job.get("content") or "").strip(),
+                    posted_at=parse_posted(
+                        raw_job.get("first_published") or raw_job.get("updated_at")
+                    ),
                 )
             )
         except (AttributeError, KeyError, TypeError) as error:

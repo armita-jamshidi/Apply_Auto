@@ -3,6 +3,8 @@
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TypeVar
 
 import httpx
@@ -46,3 +48,22 @@ def label_remote(location: str, is_remote: bool) -> str:
     if not is_remote or "remote" in location.casefold():
         return location
     return f"Remote - {location}" if location else "Remote"
+
+
+def parse_posted(value: object) -> datetime | None:
+    """Read a posting date: ISO 8601 text, RFC 2822 text, or epoch seconds or milliseconds."""
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, int | float) or str(value).isdigit():
+            number = float(value)
+            moment = datetime.fromtimestamp(number / 1000 if number > 1e11 else number, UTC)
+        else:
+            text = str(value).strip()
+            try:
+                moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                moment = parsedate_to_datetime(text)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
