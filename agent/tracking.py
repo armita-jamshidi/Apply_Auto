@@ -87,22 +87,37 @@ def record_attempt(
 
 
 def mark_job(session: Session, url: str, status: str) -> Job:
-    """Set a job's status by hand; marking it applied records the submission time."""
+    """Set a job's status by hand; marking it applied records the submission time once.
+
+    Marking an applied job applied again changes nothing, and moving a job out of Applied
+    (Undo) clears hand-recorded submissions, so marking it again never stacks duplicates.
+    Submissions the agent itself made in live mode are never erased.
+    """
     if status not in MARKABLE_STATUSES:
         raise ValueError(f"Status must be one of {sorted(MARKABLE_STATUSES)}")
     job = session.scalar(select(Job).where(Job.url == url))
     if job is None:
         raise ValueError(f"No job with URL {url} is in the database")
+    attempts = session.scalars(
+        select(Application)
+        .where(Application.job_id == job.id)
+        .order_by(Application.started_at.desc(), Application.id.desc())
+    ).all()
     job.status = status
     if status == "applied":
-        latest = session.scalar(
-            select(Application)
-            .where(Application.job_id == job.id, Application.mode != "live")
-            .order_by(Application.started_at.desc(), Application.id.desc())
-            .limit(1)
-        )
-        if latest is None or latest.submitted_at is not None:
+        if any(attempt.submitted_at is not None for attempt in attempts):
+            return job
+        latest = next((attempt for attempt in attempts if attempt.mode != "live"), None)
+        if latest is None:
             latest = Application(job_id=job.id, mode="manual", answers={})
             session.add(latest)
         latest.submitted_at = utc_now()
+        return job
+    for attempt in attempts:
+        if attempt.mode == "live" or attempt.submitted_at is None:
+            continue
+        if attempt.mode == "manual" and not attempt.answers:
+            session.delete(attempt)
+        else:
+            attempt.submitted_at = None
     return job

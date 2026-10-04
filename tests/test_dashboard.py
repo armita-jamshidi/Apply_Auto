@@ -302,3 +302,54 @@ def test_hand_off_records_submission_when_person_confirms(
     assert tracked[0]["submitted"] is True
     assert tracked[0]["args"][1] == OVERVIEW
     assert tracked[0]["args"][2] == "hand_off"
+
+
+def test_marking_applied_twice_or_after_undo_keeps_one_submission(session: Session) -> None:
+    job = add_job(session, OVERVIEW)
+    session.add(Application(job_id=job.id, mode="dry_run", answers={"Email": "x"}))
+    session.flush()
+
+    def submitted() -> list[tuple[str, bool]]:
+        session.flush()
+        rows = session.scalars(
+            select(Application).where(Application.job_id == job.id).order_by(Application.id)
+        ).all()
+        return [(row.mode, row.submitted_at is not None) for row in rows]
+
+    mark_job(session, OVERVIEW, "applied")
+    first = session.scalar(select(Application.submitted_at).where(Application.job_id == job.id))
+    mark_job(session, OVERVIEW, "applied")
+    assert submitted() == [("dry_run", True)]
+    assert session.scalar(
+        select(Application.submitted_at).where(Application.job_id == job.id)
+    ) == first
+
+    mark_job(session, OVERVIEW, "manual_review")
+    assert submitted() == [("dry_run", False)]
+    mark_job(session, OVERVIEW, "applied")
+    assert submitted() == [("dry_run", True)]
+
+    other = add_job(session, "https://example.com/manual")
+    mark_job(session, other.url, "applied")
+    mark_job(session, other.url, "new")
+    mark_job(session, other.url, "applied")
+    session.flush()
+    manual = session.scalars(select(Application).where(Application.job_id == other.id)).all()
+    assert [(row.mode, row.submitted_at is not None) for row in manual] == [("manual", True)]
+
+
+def test_undo_never_erases_a_live_submission(session: Session) -> None:
+    job = add_job(session, OVERVIEW, status="applied")
+    session.add(
+        Application(
+            job_id=job.id, mode="live", answers={}, submitted_at=datetime(2026, 10, 1, tzinfo=UTC)
+        )
+    )
+    session.flush()
+
+    mark_job(session, OVERVIEW, "new")
+    mark_job(session, OVERVIEW, "applied")
+    session.flush()
+
+    rows = session.scalars(select(Application).where(Application.job_id == job.id)).all()
+    assert [(row.mode, row.submitted_at is not None) for row in rows] == [("live", True)]
