@@ -64,7 +64,15 @@ The page may be Workday, a company career site, or any custom form; its layout i
 Work like a careful person: call observe_page, fill what you can, move through multi-page
 forms with Next / Continue / Save and Continue, and call observe_page again after anything
 that changes the page. Controls are named by id from the latest observe_page; ids change
-after every observation, so never reuse an id from an older one.
+after every observation, so never reuse an id from an older one. Later pages often hold
+the most important questions (why this company, written answers), so get through every
+page before you finish.
+
+When Next / Continue does not move on because required fields you must leave for the
+candidate are empty (an answer you have no source for, an acknowledgement, a signature):
+- if someone is at the browser, call ask_human naming exactly those fields and asking the
+  person to fill them in (and not to press Next), then observe_page and continue;
+- if nobody is at the browser, list them in finish.
 
 Where answers come from:
 - candidate_facts below hold the candidate's contact details, links, work authorization, and
@@ -181,7 +189,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "ask_human",
         "description": (
             "Hand the browser to the candidate for something only they may do: log in, "
-            "create an account, solve a CAPTCHA, or confirm a choice. Waits until they are done."
+            "create an account, solve a CAPTCHA, confirm a choice, or fill required fields "
+            "you have no source for so the form can go to its next page. Waits until they "
+            "are done."
         ),
         "input_schema": {
             "type": "object",

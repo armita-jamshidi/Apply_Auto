@@ -45,6 +45,9 @@
   const selector = 'input:not([type=hidden]), textarea, select, button, a[href], [role=button], ' +
     '[role=combobox], [role=listbox], [role=option], [role=radio], [role=checkbox], ' +
     '[role=switch], [role=textbox], [role=menuitem], [role=tab], [contenteditable=true]';
+  // Ids restart at 1 on every read: clear the old ones, which stay on controls of earlier
+  // pages that are hidden but still in the document, so an id names one control only.
+  for (const old of document.querySelectorAll('[' + attribute + ']')) old.removeAttribute(attribute);
   const controls = [];
   let next = 0;
   for (const el of document.querySelectorAll(selector)) {

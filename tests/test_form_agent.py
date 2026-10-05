@@ -320,3 +320,97 @@ def test_finish_notes_attach_to_the_question_already_recorded(page, tmp_path: Pa
         "Typing Speed (WPM)",
     }
     assert agent.run.notes["Expected Salary"] == "Yours to decide."
+
+
+TWO_PAGES = """<!doctype html><html><body>
+<section id="one"><h2>Your information</h2>
+  <label for="name">Full name</label><input id="name">
+  <label for="salary">Expected salary (required)</label><input id="salary" required>
+  <p id="error" role="alert" hidden>Please fill in all required fields.</p>
+  <button type="button" onclick="next()">Next</button></section>
+<section id="two" hidden><h2>Questions</h2>
+  <label for="why">Why do you want to work at Acme?</label><textarea id="why"></textarea>
+  <button type="button" onclick="window.submitted = true">Submit application</button></section>
+<script>function next() {
+  if (!document.getElementById('salary').value) {
+    document.getElementById('error').hidden = false; return;
+  }
+  document.getElementById('one').hidden = true;
+  document.getElementById('two').hidden = false;
+}</script></body></html>"""
+
+
+def test_the_candidate_fills_a_blocking_field_and_the_agent_answers_the_next_page(
+    page, tmp_path: Path
+) -> None:
+    page.set_content(TWO_PAGES)
+    asked: list[str] = []
+
+    def person_fills(request: str) -> bool:
+        asked.append(request)
+        page.fill("#salary", "Negotiable")
+        return True
+
+    draft = "Acme's agent platform matches the evaluation work I have done."
+    model = ScriptedModel(
+        [
+            lambda ids: [call("observe_page", {}, 1)],
+            lambda ids: [
+                call(
+                    "fill_field",
+                    {"control_id": ids["Full name"], "value": "Sam Sample", "question": "Name"},
+                    2,
+                ),
+                call("click", {"control_id": ids["Next"], "question": None}, 3),
+                call("observe_page", {}, 4),
+            ],
+            lambda ids: [call("ask_human", {"request": "Fill in Expected salary."}, 5)],
+            lambda ids: [call("observe_page", {}, 6)],
+            lambda ids: [call("click", {"control_id": ids["Next"], "question": None}, 7)],
+            lambda ids: [call("observe_page", {}, 8)],
+            lambda ids: [
+                call(
+                    "answer_question",
+                    {"question": "Why do you want to work at Acme?", "long_form": True},
+                    9,
+                )
+            ],
+            lambda ids: [
+                call(
+                    "fill_field",
+                    {
+                        "control_id": ids["Why do you want to work at Acme?"],
+                        "value": draft,
+                        "question": "Why do you want to work at Acme?",
+                    },
+                    10,
+                ),
+                call("click", {"control_id": ids["Submit application"], "question": None}, 11),
+            ],
+            lambda ids: [
+                call("finish", {"summary": "Both pages done.", "left_for_candidate": []}, 12)
+            ],
+        ]
+    )
+    decision = AnswerDecision(
+        draft, "[resume] evaluation", True, "Draft.", is_motivation_draft=True
+    )
+    agent = FormAgent(
+        page,
+        profile={},
+        resume_path=tmp_path / "r.pdf",
+        answerer=lambda *_: decision,
+        client=model,
+        model="m",
+        ask_human=person_fills,
+        fill_drafts=True,
+    )
+
+    run = agent.start(JobListing("x", "x", "Acme", "AI Engineer", "https://acme.example", "", ""))
+
+    assert asked == ["Fill in Expected salary."]
+    assert page.is_visible("#why") and page.input_value("#why") == draft
+    assert page.evaluate("window.submitted") is None
+    assert run.answers["Name"] == "Sam Sample"
+    assert run.suggested_answers["Why do you want to work at Acme?"] == draft
+    assert run.finished
