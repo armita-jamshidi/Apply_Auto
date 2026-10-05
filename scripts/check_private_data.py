@@ -20,6 +20,7 @@ PRIVATE_PATTERNS = (
     "profile/profile.yaml",
     "profile/*.pdf",
     "profile/resume*",
+    "profile/library/*",
     ".env",
     ".env.*",
     "*.db",

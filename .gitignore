@@ -3,6 +3,8 @@
 /profile/resume.pdf
 /profile/resume.*
 /profile/*resume*.pdf
+# Private essays, project write-ups, and other source material for answers
+/profile/library/
 /.env
 /.env.*
 !/.env.example

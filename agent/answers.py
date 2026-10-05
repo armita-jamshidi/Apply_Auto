@@ -13,6 +13,8 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent.library import LibraryDocument, has_extra_sources, load_library
+from agent.library_agent import draft_from_library
 from agent.settings import load_settings
 
 LOGGER = logging.getLogger(__name__)
@@ -115,11 +117,15 @@ def answer_custom_question(
     client: Anthropic | None = None,
     job_context: Mapping[str, str] | None = None,
     long_form: bool = False,
+    library_dir: Path | None = None,
 ) -> AnswerDecision:
     """Apply user-approved response rules or return a grounded answer/draft.
 
     long_form marks a large text box (a textarea). A long or multi-part question there expects
     written prose, so it gets a cited draft instead of a single quoted phrase.
+
+    When the source library (profile/library/, or library_dir) holds essays or write-ups
+    beyond the resume, written drafts come from an agent that decides what to look up there.
     """
     if not question.strip():
         raise ValueError("question cannot be empty")
@@ -142,6 +148,16 @@ def answer_custom_question(
     model_name = model or os.getenv("ANTHROPIC_MODEL") or settings.anthropic_model
     anthropic_client = client or _create_client()
     if (long_form and _is_open_ended(question)) or _is_motivation_question(question):
+        documents = load_library(
+            library_dir,
+            resume_text=resume,
+            profile_facts=profile_facts,
+            job_description=(job_context or {}).get("description", ""),
+        )
+        if has_extra_sources(documents):
+            return _draft_from_library(
+                question, documents, job_context or {}, model_name, anthropic_client
+            )
         return _draft_motivation_answer(
             question,
             profile,
@@ -386,6 +402,26 @@ def _draft_motivation_answer(
         evidence=citations,
         needs_manual_review=True,
         reason="Grounded draft prepared; candidate review is required before use.",
+        is_motivation_draft=True,
+    )
+
+
+def _draft_from_library(
+    question: str,
+    documents: list[LibraryDocument],
+    job_context: Mapping[str, str],
+    model: str,
+    client: Anthropic,
+) -> AnswerDecision:
+    draft = draft_from_library(question, documents, job_context, model=model, client=client)
+    if draft.answer is None:
+        return _manual(draft.reason or "The source library does not support a draft.")
+    citations = "\n".join(f"[{claim.doc_id}] {claim.evidence}" for claim in draft.claims)
+    return AnswerDecision(
+        answer=draft.answer,
+        evidence=citations,
+        needs_manual_review=True,
+        reason="Grounded draft from your source library; review it before use.",
         is_motivation_draft=True,
     )
 

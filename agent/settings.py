@@ -58,6 +58,7 @@ class AgentSettings:
     max_jobs_per_company: int | None = None
     max_years_experience: int | None = None
     max_posting_age_days: int | None = None
+    form_agent_model: str = "claude-opus-5-5"
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
 
@@ -115,6 +116,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         ),
         title_role_keywords=_keywords(discovery.get("title_role_keywords"), ()),
         remote_boards=_keywords(discovery.get("remote_boards"), ()),
+        form_agent_model=str(raw.get("form_agent_model") or "claude-opus-5-5"),
         max_posting_age_days=(
             int(discovery["max_posting_age_days"])
             if discovery.get("max_posting_age_days")

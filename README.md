@@ -2,7 +2,7 @@
 
 A privacy-conscious job discovery and application assistant, built in reviewable phases.
 
-**Current status: Phases 1–7 are implemented.** The agent finds AI and agent engineering roles that are remote in the US or in North Carolina, from company boards (Greenhouse, Lever, Ashby, SmartRecruiters) and remote job sources (We Work Remotely, Hacker News "Who is hiring?", Himalayas). It scores each job's fit against a private profile with Anthropic, links each job to the company's own application page, prepares grounded answers to every application question, and shows everything on a local dashboard where jobs are marked applied or removed. Submitting stays with the candidate: forms are filled in dry runs, in a browser left open for the candidate (hand-off), or copied from the review page (assist). Automatic submission happens only with an explicit `--live` flag and only when every safeguard passes.
+**Current status: Phases 1–9 are implemented.** The agent finds AI and agent engineering roles that are remote in the US or in North Carolina, from company boards (Greenhouse, Lever, Ashby, SmartRecruiters) and remote job sources (We Work Remotely, Hacker News "Who is hiring?", Himalayas). It scores each job's fit against a private profile with Anthropic, links each job to the company's own application page, prepares grounded answers to every application question, and shows everything on a local dashboard where jobs are marked applied or removed. Unfamiliar forms (Workday, company career pages, custom widgets) are filled by a model-driven form agent, and written answers can draw on a private library of essays and project write-ups through an agent that decides what to look up. Submitting stays with the candidate: forms are filled in dry runs, in a browser left open for the candidate (hand-off), or copied from the review page (assist). Automatic submission happens only with an explicit `--live` flag and only when every safeguard passes.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ flowchart LR
 
 ## Design Decisions
 
-- **Two LLM steps:** LLM use is limited to fit scoring and grounded answers to custom application questions. Fetching, filtering, deduplication, safeguards, and persistence are deterministic code. Phase 2 implements scoring; Phase 3 adds conservative factual answers and candidate-reviewed motivation drafts.
+- **Where models are used:** fit scoring, grounded answers to custom application questions (including the library lookup agent), and the form agent for unfamiliar forms. Fetching, filtering, deduplication, safeguards, and persistence are deterministic code. Phase 2 implements scoring; Phase 3 adds conservative factual answers and candidate-reviewed motivation drafts.
 - **LLM provider:** The fit scorer uses Anthropic's API with a required structured tool response validated by Pydantic. The API key is read from local `.env` configuration and must never be committed. Tests mock the SDK and do not make API calls.
 - **No LinkedIn scraping:** LinkedIn pages and Easy Apply are not automated. The planned LinkedIn integration reads alert emails and locates the employer's own posting.
 - **Platform tiers:** Greenhouse, Lever, Ashby, and SmartRecruiters are Tier 1; Workday is Tier 2; iCIMS, Taleo, SuccessFactors, and unrecognized forms are Tier 3/manual review. All four Tier 1 platforms have fetchers and form fillers.
@@ -194,6 +194,28 @@ Any existing live-attempt record for a job blocks another attempt, even if the b
 job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/jobs/123" --live
 ```
 
+## Unfamiliar Forms: the Form Agent
+
+The fillers above use fixed selectors for Greenhouse, Lever, Ashby, and SmartRecruiters. Every other form (Workday, company career pages, forms with custom widgets) is filled by a model-driven agent that reads the page and decides what to do:
+
+```powershell
+job-agent-fill --job-url "https://company.wd1.myworkdayjobs.com/en-US/careers/job/..."
+```
+
+It opens the page in the hand-off browser and works through the form with a small set of tools: read the page as a numbered list of controls with the labels a person sees, take a screenshot when a widget is unclear, fill a field, choose a dropdown option, click (radio buttons, checkboxes, custom dropdowns, Next/Continue), type into search-as-you-type fields and pick from the options that appear, upload the resume, and ask the answer engine for a grounded answer. Contact details, links, work authorization, and saved answers come from the private profile; everything else goes through the same grounded answer engine as the other fillers, so nothing is invented. The model is `form_agent_model` in `config/settings.yaml` (default `claude-opus-5-5`), with the API's refusal fallback enabled.
+
+Safety is enforced in code, not only in the prompt:
+
+- **It never submits.** Clicking a control whose text reads like Submit, Send application, or Finish application is refused; the agent stops and reports instead.
+- **It never creates accounts, types passwords, or solves CAPTCHAs.** It asks you to do those in the browser window and waits (press Enter in the terminal when done). With `--headless` nobody is there, so it lists them instead.
+- Legal acknowledgements and attestations are left for you. Written drafts are typed into the form only in the visible browser, where you review them before submitting.
+
+When it finishes, the review page opens with every field, draft, and note, the attempt is recorded on the dashboard (`--lookup-url` names the dashboard job when the form is on another page), and the window stays open for you to check and submit. The dashboard's **Finish** command for jobs off the four supported boards runs this agent on the company's own application page.
+
+## Source Library for Written Answers
+
+Put essays, project write-ups, and other source material in the private folder `profile/library/` (Markdown, text, PDF, or Word). The folder is git-ignored and blocked by the privacy hook. When it holds anything beyond the resume, written questions (why this company, accomplishments, projects, long text boxes) are drafted by an agent that decides what to look up: it lists the documents, searches them for passages that match the question, reads what it will rely on, and submits a draft in which every sentence carries an exact quote from a named document (or from the resume, profile, or job description). Quotes are checked in code; a draft with an unverifiable quote is sent back once to be fixed, then left for you. Without a library, drafts work as before from the profile and resume.
+
 ## Dashboard
 
 ```powershell
@@ -238,8 +260,8 @@ Before filling a form, `job-apply` checks the stored job against your profile. J
 5. Candidate-in-the-loop applying: review pages, hand-off and assist modes, saved answers for choice questions, and written drafts for open-ended questions. (Done.)
 6. `job-run` pipeline and interactive dashboard: batch fit scoring, answer preparation, match details, every answer with Copy buttons, Mark applied, Undo, and Remove. (Done.)
 7. Targeted discovery: AI and agent engineering roles only, North Carolina or US remote, no internships, co-ops, or new-grad roles, at most 2 years required, at most 2 jobs per company, postings under 60 days old, remote job sources, and links to each company's own application page. (Done.)
-8. A model-driven form agent for unfamiliar forms (Workday, company career pages, custom widgets) that reads the page and decides what to fill, never submitting.
-9. A source library beyond one resume (essays, project write-ups) with an agent that decides what to look up for each answer, keeping every claim cited.
+8. A model-driven form agent for unfamiliar forms (Workday, company career pages, custom widgets) that reads the page and decides what to fill, never submitting. (Done.)
+9. A source library beyond one resume (essays, project write-ups) with an agent that decides what to look up for each answer, keeping every claim cited. (Done.)
 10. LinkedIn alert email parsing to locate the employer's own posting.
 11. Grounded resume tailoring with claim traceability checks.
 12. Daily scheduling.

@@ -458,8 +458,12 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
     finish = ""
-    if row.group in {"ready", "new", "location"} and is_fillable(job.platform, job.url):
-        command = hand_off_command(job.platform, job.url, job.company, job.title)
+    if row.group in {"ready", "new", "location"}:
+        if is_fillable(job.platform, job.url):
+            command = hand_off_command(job.platform, job.url, job.company, job.title)
+        else:
+            # Unknown forms (Workday, company career pages) go to the model-driven form agent.
+            command = form_agent_command(apply, job.url)
         finish = f"<details><summary>Finish</summary><pre>{escape(command)}</pre></details>"
     search_text = escape(f"{job.company} {job.title} {job.location_raw}".casefold())
     detail_id = f"detail-{job.id}"
@@ -485,6 +489,14 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         f"<tr class='detail' id='{detail_id}' hidden><td colspan='9'>"
         f"{_detail_html(row, fields)}</td></tr>"
     )
+
+
+def form_agent_command(apply_url: str, job_url: str) -> str:
+    """The command that fills this job's application with the form agent."""
+    command = f'python -m agent.form_agent --job-url "{apply_url.replace(chr(34), "")}"'
+    if job_url != apply_url:
+        command += f' --lookup-url "{job_url.replace(chr(34), "")}"'
+    return command
 
 
 def application_link(job: Job) -> str:

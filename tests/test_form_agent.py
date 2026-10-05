@@ -1,0 +1,262 @@
+"""The form agent on a real browser page with custom widgets, driven by a scripted model."""
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from playwright.sync_api import sync_playwright
+
+from agent.answers import AnswerDecision
+from agent.form_agent import FormAgent, run_form_agent
+from agent.types import JobListing
+
+FORM = """<!doctype html><html><body>
+<h1>Apply: AI Engineer</h1>
+<label for="name">Legal name</label><input id="name">
+<label for="email">Email address</label><input id="email" type="email">
+<div><span id="country-label">Country</span>
+  <div role="combobox" aria-labelledby="country-label" tabindex="0" id="country"
+       onclick="document.getElementById('countries').hidden = false">Select...</div>
+  <ul role="listbox" id="countries" hidden>
+    <li role="option" onclick="pick('United States')">United States</li>
+    <li role="option" onclick="pick('Canada')">Canada</li>
+  </ul></div>
+<fieldset><legend>Will you require sponsorship?</legend>
+  <label><input type="radio" name="visa" value="yes"> Yes</label>
+  <label><input type="radio" name="visa" value="no"> No</label></fieldset>
+<label for="why">Why do you want to work here? What draws you to this team?</label>
+<textarea id="why"></textarea>
+<label for="cv">Resume/CV</label><input id="cv" type="file">
+<label for="pw">Password</label><input id="pw" type="password">
+<button type="button" onclick="window.accountCreated = true">Create Account</button>
+<button type="button" onclick="window.submitted = true">Submit Application</button>
+<script>function pick(value) {
+  document.getElementById('country').textContent = value;
+  document.getElementById('countries').hidden = true;
+}</script>
+</body></html>"""
+
+
+def call(name: str, arguments: dict, number: int) -> SimpleNamespace:
+    return SimpleNamespace(type="tool_use", name=name, input=arguments, id=f"call{number}")
+
+
+class ScriptedModel:
+    """Plays the model: each step reads the latest observation and returns tool calls."""
+
+    def __init__(self, steps) -> None:
+        self.steps = list(steps)
+        self.messages = SimpleNamespace(create=self.create)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+        self.results: list[dict] = []
+
+    def create(self, **request):
+        history = request["messages"]
+        if history[-1]["role"] == "user" and isinstance(history[-1]["content"], list):
+            self.results.extend(history[-1]["content"])
+        observation = next(
+            (
+                json.loads(result["content"])
+                for result in reversed(self.results)
+                if isinstance(result["content"], str) and '"controls"' in result["content"]
+            ),
+            {"controls": []},
+        )
+        step = self.steps.pop(0)
+        calls = step(_ids(observation))
+        return SimpleNamespace(stop_reason="tool_use", content=calls)
+
+
+def _ids(observation: dict) -> dict[str, str]:
+    """Control ids by a readable key: label, text, or label of the option's button."""
+    ids: dict[str, str] = {}
+    for control in observation["controls"]:
+        for key in (control.get("label"), control.get("text")):
+            if key:
+                ids.setdefault(key.split(" | ")[0], control["id"])
+    return ids
+
+
+@pytest.fixture
+def page():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(chromium_sandbox=True)
+        page = browser.new_page()
+        page.set_content(FORM)
+        yield page
+        browser.close()
+
+
+def test_agent_fills_custom_widgets_and_never_submits(page, tmp_path: Path) -> None:
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    draft = "I build agents that people trust."
+    model = ScriptedModel(
+        [
+            lambda ids: [call("observe_page", {}, 1)],
+            lambda ids: [
+                call(
+                    "fill_field",
+                    {
+                        "control_id": ids["Legal name"],
+                        "value": "Sam Sample",
+                        "question": "Legal name",
+                    },
+                    2,
+                ),
+                call(
+                    "fill_field",
+                    {
+                        "control_id": ids["Email address"],
+                        "value": "sam@example.com",
+                        "question": "Email",
+                    },
+                    3,
+                ),
+                call(
+                    "click",
+                    {"control_id": ids["No"], "question": "Will you require sponsorship?"},
+                    4,
+                ),
+                call("upload_resume", {"control_id": ids["Resume/CV"]}, 5),
+                call("click", {"control_id": ids["Country"], "question": None}, 6),
+            ],
+            lambda ids: [call("observe_page", {}, 7)],
+            lambda ids: [
+                call("click", {"control_id": ids["United States"], "question": "Country"}, 8),
+                call(
+                    "answer_question",
+                    {"question": "Why do you want to work here?", "long_form": True},
+                    9,
+                ),
+                call(
+                    "fill_field",
+                    {"control_id": ids["Password"], "value": "hunter2", "question": "Password"},
+                    10,
+                ),
+                call("click", {"control_id": ids["Create Account"], "question": None}, 11),
+                call("click", {"control_id": ids["Submit Application"], "question": None}, 12),
+            ],
+            lambda ids: [
+                call(
+                    "finish",
+                    {
+                        "summary": "Filled everything but the essay.",
+                        "left_for_candidate": [
+                            {"field": "Password", "reason": "Sign-in is yours."},
+                            {"field": "Submit Application", "reason": "Yours to submit."},
+                        ],
+                    },
+                    13,
+                )
+            ],
+        ]
+    )
+    answers = {
+        "Why do you want to work here?": AnswerDecision(
+            draft, "[resume] agents", True, "Draft for review.", is_motivation_draft=True
+        )
+    }
+
+    agent = FormAgent(
+        page,
+        profile={"personal": {"name": "Sam Sample"}},
+        resume_path=resume,
+        answerer=lambda question, _long: answers[question],
+        client=model,
+        model="test-model",
+    )
+    run = agent.start(JobListing("x", "x", "Acme", "AI Engineer", "https://acme.example", "", ""))
+
+    assert run.finished and run.summary == "Filled everything but the essay."
+    assert page.input_value("#name") == "Sam Sample"
+    assert page.input_value("#email") == "sam@example.com"
+    assert page.is_checked("input[value=no]")
+    assert page.text_content("#country") == "United States"
+    assert page.evaluate("document.getElementById('cv').files[0].name") == "resume.pdf"
+    assert page.input_value("#pw") == ""
+    assert page.evaluate("window.submitted") is None
+    assert page.evaluate("window.accountCreated") is None
+    assert page.input_value("#why") == ""
+    assert run.answers["Country"] == "United States"
+    assert run.answers["Will you require sponsorship?"] == "No"
+    assert run.suggested_answers["Why do you want to work here?"] == draft
+    assert run.answers["Password"] is None
+    assert "Submit Application" not in run.answers
+    refusals = [r["content"] for r in model.results if r.get("is_error")]
+    assert any("would submit" in text for text in refusals)
+    assert any("account creation" in text for text in refusals)
+    assert any("passwords" in text for text in refusals)
+    essay = next(r["content"] for r in model.results if "draft" in r["content"])
+    assert "do not fill" in essay
+
+
+def test_drafts_are_typed_in_only_when_allowed(page, tmp_path: Path) -> None:
+    decision = AnswerDecision("A draft.", None, True, "Review.", is_motivation_draft=True)
+    allowed = FormAgent(
+        page,
+        profile={},
+        resume_path=tmp_path / "r.pdf",
+        answerer=lambda *_: decision,
+        client=None,
+        model="m",
+        fill_drafts=True,
+    )
+    assert allowed._tool_answer_question("Why us?", True)["action"].startswith("fill it")
+    assert allowed.run.suggested_answers == {"Why us?": "A draft."}
+
+
+def test_without_a_person_logins_are_reported_not_waited_for(page, tmp_path: Path) -> None:
+    agent = FormAgent(
+        page,
+        profile={},
+        resume_path=tmp_path / "r.pdf",
+        answerer=lambda *_: None,
+        client=None,
+        model="m",
+    )
+
+    result = agent._tool_ask_human("Sign in to Workday")
+
+    assert "Nobody is at the browser" in result["error"]
+    assert agent.run.notes["Needed the candidate"] == "Sign in to Workday"
+
+
+def test_run_form_agent_reports_like_the_other_fillers(
+    page, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = tmp_path / "profile.yaml"
+    profile.write_text("personal:\n  name: Sam Sample\n  email: sam@example.com\n", "utf-8")
+    monkeypatch.setattr("agent.form_agent.load_profile", lambda _path: {"personal": {}})
+    monkeypatch.setattr("agent.form_agent.extract_resume_text", lambda _path: "Python.")
+    monkeypatch.setattr(page, "goto", lambda *_args, **_kwargs: None)
+    model = ScriptedModel(
+        [
+            lambda ids: [call("observe_page", {}, 1)],
+            lambda ids: [
+                call(
+                    "fill_field",
+                    {"control_id": ids["Legal name"], "value": "Sam Sample", "question": "Name"},
+                    2,
+                )
+            ],
+            lambda ids: [call("finish", {"summary": "Done.", "left_for_candidate": []}, 3)],
+        ]
+    )
+
+    result = run_form_agent(
+        page,
+        JobListing("x", "x", "Acme", "AI Engineer", "https://acme.example", "", ""),
+        profile,
+        tmp_path / "resume.pdf",
+        client=model,
+        model="test-model",
+        screenshot_path=tmp_path / "shot.png",
+    )
+
+    assert result.answers == {"Name": "Sam Sample"}
+    assert result.field_notes["Agent summary"] == "Done."
+    assert "attach it yourself" in result.field_notes["Resume"]
+    assert result.status == "dry_run_ready"
+    assert Path(result.screenshot_path).is_file()

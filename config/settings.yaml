@@ -2,6 +2,8 @@
 database_url: sqlite:///data/job_agent.db
 fit_score_threshold: 70
 anthropic_model: claude-sonnet-5-5
+# Model for the form agent that fills unfamiliar forms (Workday, career pages, custom widgets).
+form_agent_model: claude-opus-5-5
 location:
   include_hybrid_nc: true
 network:
