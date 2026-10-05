@@ -29,6 +29,7 @@ from agent.applier.review import (
     FitSummary,
     count_statuses,
     hand_off_command,
+    profile_quick_answers,
     write_review_page,
 )
 from agent.applier.smartrecruiters import run_smartrecruiters_application
@@ -289,6 +290,7 @@ def _report_dry_run(
         ),
         form_url=form_url(args.platform, args.job_url),
         finish_command=finish_command(args, job.company, job.title),
+        quick_answers=_quick_answers(args.profile),
     )
     counts = ", ".join(
         f"{count} {status}" for status, count in count_statuses(rows).items() if count
@@ -297,6 +299,15 @@ def _report_dry_run(
     print(f"Fields: {counts}")
     print(f"Fit score: {fit.score if fit.score is not None else fit.note}")
     return fit
+
+
+def _quick_answers(profile_path: Path) -> list[tuple[str, str]]:
+    """Profile answers for the review page; empty when the profile cannot be read."""
+    try:
+        return profile_quick_answers(load_profile(profile_path))
+    except (OSError, ValueError) as error:
+        LOGGER.info("Review page without profile details: %s", error)
+        return []
 
 
 def _ask_submitted() -> bool:

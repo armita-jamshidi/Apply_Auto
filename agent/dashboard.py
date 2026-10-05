@@ -5,11 +5,13 @@ import json
 import logging
 import re
 import webbrowser
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -27,6 +29,7 @@ from db.session import create_database_engine, create_session_factory, ensure_sc
 
 LOGGER = logging.getLogger(__name__)
 DASHBOARD_PATH = PROJECT_ROOT / "dashboard.html"
+PROFILE_PATH = PROJECT_ROOT / "profile" / "profile.yaml"
 LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 REVIEWS_DIR = PROJECT_ROOT / "reviews"
 DEFAULT_PORT = 8765
@@ -93,6 +96,11 @@ def write_dashboard(
     if fit_threshold is None:
         fit_threshold = load_settings().fit_score_threshold
     rows = dashboard_rows(session)
+    details = "".join(
+        f"<li><span class='muted'>{escape(label)}</span><pre>{escape(value)}</pre>"
+        f"<button type='button' class='copy' data-copy='{escape(value)}'>Copy</button></li>"
+        for label, value in _quick_answers()
+    ) or "<li class='muted'>Add your details to profile/profile.yaml.</li>"
     counts = {key: sum(row.group == key for row in rows) for key, _, _ in GROUPS}
     filters = "".join(
         f"<button type='button' data-filter='{key}'>{escape(label)} "
@@ -221,7 +229,7 @@ tr.detail > td {{ border-top: 0; padding-top: 0; }}
 .f-filled {{ color: var(--applied); }} .f-draft {{ color: var(--location); }}
 .f-manual_review {{ color: var(--ready); }} .f-skipped {{ color: var(--skipped); }}
 button.copy {{ padding: 0 10px; font-size: 0.75rem; margin-top: 4px; }}
-.controls {{ display: flex; gap: 10px; align-items: center; margin-top: 6px; }}
+.controls {{ display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; }}
 .controls button {{ padding: 2px 12px; font-size: 0.85rem; white-space: nowrap; }}
 button.primary {{ background: var(--accent); border-color: var(--accent); color: var(--panel); }}
 button.mark:not(.primary) {{ color: var(--applied); border-color: var(--applied); }}
@@ -231,6 +239,30 @@ button:disabled {{ opacity: 0.6; cursor: progress; }}
   border: 1px solid var(--location); color: var(--text); background: var(--panel);
 }}
 button.remove {{ padding: 0 10px; font-size: 0.8rem; color: var(--ready); }}
+body.with-panel main {{ margin-right: 440px; }}
+#panel {{
+  position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 100vw; z-index: 5;
+  overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line);
+  padding: 16px 18px 40px; box-shadow: -4px 0 16px rgb(0 0 0 / 0.08);
+}}
+@media (max-width: 900px) {{ body.with-panel main {{ margin-right: 0; }} }}
+#panel h2 {{ font-size: 1.05rem; margin: 0; }}
+#panel h3 {{ font-size: 0.9rem; margin: 18px 0 8px; }}
+#panel ul {{ list-style: none; padding: 0; margin: 0; }}
+#panel li {{ padding: 8px 0; border-top: 1px solid var(--line); }}
+#panel li pre {{ margin: 2px 0 0; padding: 0; border: 0; font: inherit; }}
+#panel .panel-head {{ display: flex; justify-content: space-between; gap: 8px; }}
+#panel textarea {{
+  width: 100%; min-height: 70px; font: inherit; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}}
+#panel .answers thead {{ display: none; }}
+#panel .answers tr {{ display: block; padding: 8px 0; border-top: 1px solid var(--line); }}
+#panel .answers th, #panel .answers td {{
+  display: block; width: auto; padding: 2px 0; border: 0;
+}}
+#panel .answers td:empty {{ display: none; }}
+.kind {{ font-size: 0.75rem; margin-left: 6px; }}
 #toast {{
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 90vw;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -275,6 +307,21 @@ asks whether you submitted. Click <strong>Mark applied</strong> once you submit 
 want; removed jobs are not found again.</p>
 </div>
 </main>
+<aside id="panel" hidden aria-label="Apply panel">
+<div class="panel-head"><div><h2 id="panel-title"></h2>
+<div class="muted" id="panel-company"></div></div>
+<button type="button" id="panel-close" aria-label="Close panel">Close</button></div>
+<p><a id="panel-apply" target="_blank" rel="noopener">Open the application</a>
+<span class="muted"> in your own browser, then copy answers from here.</span></p>
+<h3>This application</h3>
+<div id="panel-answers"></div>
+<h3>Ask about a question</h3>
+<textarea id="panel-question" placeholder="Paste a question from the form"></textarea>
+<button type="button" id="panel-ask" class="primary">Get answer</button>
+<ul id="panel-asked"></ul>
+<h3>Your details</h3>
+<ul>{details}</ul>
+</aside>
 <div id="toast" role="status" hidden></div>
 <script>
 const rows = Array.from(document.querySelectorAll('#jobs tr[data-group]'));
@@ -300,6 +347,11 @@ document.addEventListener('click', async (event) => {{
     document.getElementById(row.dataset.detail).hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
     toggle.textContent = open ? 'Hide' : 'Details';
+    return;
+  }}
+  const opener = event.target.closest('button.panel-open');
+  if (opener) {{
+    openPanel(opener.closest('tr'));
     return;
   }}
   const remove = event.target.closest('button.remove');
@@ -340,6 +392,85 @@ for (const button of buttons) {{
   }});
 }}
 search.addEventListener('input', apply);
+const panel = document.getElementById('panel');
+let panelJob = null;
+function openPanel(row) {{
+  panelJob = row.dataset.job;
+  document.getElementById('panel-title').textContent = row.dataset.title;
+  document.getElementById('panel-company').textContent = row.dataset.company;
+  document.getElementById('panel-apply').href = row.dataset.apply;
+  const answers = document.getElementById('panel-answers');
+  answers.replaceChildren();
+  const table = document.querySelector('#' + row.dataset.detail + ' table.answers');
+  if (table) {{
+    answers.append(table.cloneNode(true));
+  }} else {{
+    const note = document.createElement('p');
+    note.className = 'muted';
+    note.textContent = 'No answers prepared yet. Ask about each question below.';
+    answers.append(note);
+  }}
+  document.getElementById('panel-asked').replaceChildren();
+  panel.hidden = false;
+  document.body.classList.add('with-panel');
+}}
+document.getElementById('panel-close').addEventListener('click', () => {{
+  panel.hidden = true;
+  document.body.classList.remove('with-panel');
+}});
+document.getElementById('panel-ask').addEventListener('click', async () => {{
+  const box = document.getElementById('panel-question');
+  const question = box.value.trim();
+  if (!question || !panelJob) return;
+  if (!LIVE) {{
+    notify('Run "job-dashboard" to ask questions; this copy cannot reach the answer service.');
+    return;
+  }}
+  const button = document.getElementById('panel-ask');
+  button.disabled = true;
+  button.textContent = 'Thinking...';
+  const item = document.createElement('li');
+  try {{
+    const response = await fetch('/jobs/' + panelJob + '/answer', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json', 'X-Job-Dashboard': '1' }},
+      body: JSON.stringify({{ question }}),
+    }});
+    const reply = await response.json();
+    if (!response.ok) throw new Error(reply.error || response.statusText);
+    const label = document.createElement('div');
+    label.textContent = question;
+    const kind = document.createElement('span');
+    kind.className = 'kind muted';
+    const kinds = {{ answer: 'answer', draft: 'draft: review it', none: 'no answer' }};
+    kind.textContent = kinds[reply.kind];
+    label.append(kind);
+    item.append(label);
+    if (reply.answer) {{
+      const text = document.createElement('pre');
+      text.textContent = reply.answer;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'copy';
+      copy.dataset.copy = reply.answer;
+      copy.textContent = 'Copy';
+      item.append(text, copy);
+    }}
+    if (reply.note) {{
+      const note = document.createElement('div');
+      note.className = 'muted';
+      note.textContent = reply.note;
+      item.append(note);
+    }}
+    document.getElementById('panel-asked').prepend(item);
+    box.value = '';
+  }} catch (error) {{
+    notify('Could not answer: ' + error.message);
+  }} finally {{
+    button.disabled = false;
+    button.textContent = 'Get answer';
+  }}
+}});
 // Changes are saved by the local server (job-dashboard --serve); an opened file cannot save.
 const LIVE = location.protocol === 'http:';
 const toast = document.getElementById('toast');
@@ -453,7 +584,8 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
             "Mark applied</button>"
         )
     controls = (
-        f"<div class='controls'>{applied_button}"
+        f"<div class='controls'><button type='button' class='panel-open primary' "
+        f"data-job='{job.id}'>Apply panel</button>{applied_button}"
         f"<button type='button' class='remove' data-job='{job.id}' "
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
@@ -473,7 +605,9 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
         filled = sum(field.status == "filled" for field in fields)
         answered = f"<div class='muted'>{filled} of {len(fields)} answered</div>"
     return (
-        f"<tr data-group='{row.group}' data-search='{search_text}' data-detail='{detail_id}'>"
+        f"<tr data-group='{row.group}' data-search='{search_text}' data-detail='{detail_id}' "
+        f"data-job='{job.id}' data-company='{escape(job.company)}' "
+        f"data-title='{escape(job.title)}' data-apply='{escape(apply)}'>"
         f"<td><span class='pill {row.group}'>{escape(row.label)}</span></td>"
         f"<td>{escape(job.company)}</td>"
         f"<td>{escape(job.title)}{warning}"
@@ -497,6 +631,18 @@ def form_agent_command(apply_url: str, job_url: str) -> str:
     if job_url != apply_url:
         command += f' --lookup-url "{job_url.replace(chr(34), "")}"'
     return command
+
+
+def _quick_answers() -> list[tuple[str, str]]:
+    """The candidate's common form answers for the Apply panel; empty without a profile."""
+    from agent.applier.greenhouse import load_profile
+    from agent.applier.review import profile_quick_answers
+
+    try:
+        return profile_quick_answers(load_profile(PROFILE_PATH))
+    except (OSError, ValueError) as error:
+        LOGGER.info("Apply panel without profile details: %s", error)
+        return []
 
 
 def application_link(job: Job) -> str:
@@ -655,7 +801,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def make_handler(
-    session_factory: sessionmaker[Session], port: int
+    session_factory: sessionmaker[Session],
+    port: int,
+    answer_question: Callable[[Job, str], dict[str, Any]] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Request handler that renders the dashboard and saves status changes."""
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -686,16 +834,21 @@ def make_handler(
             body = self.rfile.read(length) if length > 0 else b""
             if not self._trusted():
                 return
-            match = re.fullmatch(r"/jobs/(\d+)/status", self.path)
+            match = re.fullmatch(r"/jobs/(\d+)/(status|answer)", self.path)
             # A custom header cannot be sent cross-site without a CORS preflight, which this
             # server never approves, so other web pages cannot change your jobs.
             if match is None or self.headers.get("X-Job-Dashboard") != "1":
                 self._json(404, {"error": "Not found"})
                 return
             try:
-                status = json.loads(body or b"{}").get("status")
+                payload = json.loads(body or b"{}")
+                status = payload.get("status")
+                question = str(payload.get("question") or "").strip()
             except (ValueError, AttributeError):
-                self._json(400, {"error": "Expected JSON with a status"})
+                self._json(400, {"error": "Expected a JSON object"})
+                return
+            if match[2] == "answer":
+                self._answer(int(match[1]), question)
                 return
             with session_factory() as session:
                 job = session.get(Job, int(match[1]))
@@ -710,6 +863,28 @@ def make_handler(
                 session.commit()
                 LOGGER.info("Marked %s - %s as %s", job.company, job.title, status)
             self._json(200, {"status": status})
+
+        def _answer(self, job_id: int, question: str) -> None:
+            if not question:
+                self._json(400, {"error": "Paste a question first."})
+                return
+            if answer_question is None:
+                self._json(503, {"error": "Answering is not available."})
+                return
+            with session_factory() as session:
+                job = session.get(Job, job_id)
+                if job is None:
+                    self._json(404, {"error": "No such job"})
+                    return
+                try:
+                    reply = answer_question(job, question)
+                except Exception as error:  # the answer service is remote; report, don't crash
+                    LOGGER.warning("Could not answer %r: %s", question, error)
+                    self._json(502, {"error": f"Could not get an answer: {error}"})
+                    return
+                save_answer(session, job, question, reply)
+                session.commit()
+            self._json(200, reply)
 
         def _trusted(self) -> bool:
             # Rejects DNS-rebinding requests that reach this port under another host name.
@@ -735,13 +910,87 @@ def make_handler(
     return DashboardHandler
 
 
+def question_answerer(profile_path: Path | None = None) -> Callable[[Job, str], dict[str, Any]]:
+    """Answer a pasted question for a job from the profile, resume, and source library.
+
+    The profile and resume are read on the first question, not when the dashboard starts.
+    """
+    from agent.answers import answer_custom_question
+    from agent.applier.choices import saved_text_answer
+    from agent.applier.cli import default_resume_path
+    from agent.applier.greenhouse import extract_resume_text, load_profile
+
+    loaded: dict[str, Any] = {}
+
+    def answer(job: Job, question: str) -> dict[str, Any]:
+        if not loaded:
+            loaded["profile"] = load_profile(
+                profile_path or PROJECT_ROOT / "profile" / "profile.yaml"
+            )
+            loaded["resume"] = extract_resume_text(default_resume_path())
+        saved = saved_text_answer(question, loaded["profile"])
+        if saved:
+            return {"kind": "answer", "answer": saved, "note": "From your saved answers."}
+        decision = answer_custom_question(
+            question,
+            loaded["profile"],
+            loaded["resume"],
+            job_context={
+                "company": job.company,
+                "title": job.title,
+                "description": job.description,
+            },
+            long_form=True,
+        )
+        if decision.answer is None:
+            return {
+                "kind": "none",
+                "answer": None,
+                "note": decision.reason or "No grounded answer.",
+            }
+        kind = "draft" if decision.needs_manual_review else "answer"
+        return {
+            "kind": kind,
+            "answer": decision.answer,
+            "note": decision.reason or "",
+            "evidence": decision.evidence or "",
+        }
+
+    return answer
+
+
+def save_answer(session: Session, job: Job, question: str, reply: Mapping[str, Any]) -> None:
+    """Keep an asked answer with the job's latest attempt (or a new one) for the panel."""
+    attempt = session.scalar(
+        select(Application)
+        .where(Application.job_id == job.id, Application.mode != "live")
+        .order_by(Application.started_at.desc(), Application.id.desc())
+        .limit(1)
+    )
+    if attempt is None:
+        attempt = Application(job_id=job.id, mode="assist", answers={})
+        session.add(attempt)
+    answers = dict(attempt.answers or {})
+    drafts = dict(attempt.suggested_answers or {})
+    notes = dict(attempt.field_notes or {})
+    if reply.get("kind") == "draft":
+        answers[question] = None
+        drafts[question] = str(reply["answer"])
+    else:
+        answers[question] = reply.get("answer")
+    if reply.get("note"):
+        notes[question] = str(reply["note"])
+    # Reassign so the JSON columns are saved.
+    attempt.answers, attempt.suggested_answers, attempt.field_notes = answers, drafts, notes
+
+
 def serve(port: int, open_browser: bool) -> int:
     """Serve the dashboard on 127.0.0.1 until interrupted."""
     url = f"http://127.0.0.1:{port}/"
     engine = create_database_engine(load_settings().database_url)
     try:
         ensure_schema(engine)
-        handler = make_handler(create_session_factory(engine), port)
+        handler = make_handler(create_session_factory(engine), port, question_answerer())
         try:
             server = ThreadingHTTPServer(("127.0.0.1", port), handler)
         except OSError:
@@ -768,9 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
     engine = create_database_engine(load_settings().database_url)
-    marked = any(
-        (args.mark_applied, args.mark_skipped, args.mark_new, args.mark_removed)
-    )
+    marked = any((args.mark_applied, args.mark_skipped, args.mark_new, args.mark_removed))
     try:
         ensure_schema(engine)
         with create_session_factory(engine)() as session:

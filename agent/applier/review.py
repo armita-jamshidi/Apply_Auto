@@ -1,11 +1,12 @@
 """Local HTML review pages for dry-run application attempts."""
 
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from agent.applier.greenhouse import ApplierResult
 from agent.types import JobListing
@@ -100,6 +101,7 @@ def write_review_page(
     finish_command: str | None = None,
     assist_command: str | None = None,
     resume_file: str | None = None,
+    quick_answers: list[tuple[str, str]] | None = None,
 ) -> list[FieldRow]:
     """Write a self-contained HTML review page and return the field rows it shows."""
     rows = review_rows(result, resume_name)
@@ -171,6 +173,18 @@ def write_review_page(
         finish_html = (
             "<section><h2>Finish this application</h2>"
             f"{link_html}{resume_html}{command_html}{assist_html}</section>"
+        )
+    if quick_answers:
+        details = "".join(
+            f"<tr><th scope='row'>{escape(label)}</th><td><pre>{escape(value)}</pre>"
+            f"{_copy_button(value)}</td></tr>"
+            for label, value in quick_answers
+        )
+        finish_html += (
+            "<section><h2>Your details</h2><p class='muted'>For any form, including ones the "
+            "agent could not read (for example behind a bot check): copy each into the "
+            "matching field.</p><div class='table-wrap'><table><tbody>"
+            f"{details}</tbody></table></div></section>"
         )
     description_html = (
         f"<details><summary>Job description</summary><pre>{escape(description)}</pre></details>"
@@ -300,6 +314,80 @@ document.addEventListener('click', async (event) => {{
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(page, encoding="utf-8")
     return rows
+
+
+# Readable labels for saved answers in the private profile's application_answers.
+_ANSWER_LABELS = {
+    "current_company": "Current company",
+    "how_did_you_hear": "How did you hear about us",
+    "earliest_start_date": "Earliest start date",
+    "current_location": "Current location",
+    "currently_in_us": "Currently in the US",
+    "willing_to_relocate": "Willing to relocate",
+    "onsite_ok_in": "On-site work OK in",
+    "max_onsite_days_per_week": "Most on-site days per week",
+    "active_security_clearance": "Active security clearance",
+    "eligible_for_security_clearance": "Eligible for a security clearance",
+    "active_polygraph": "Active polygraph",
+    "ai_notetaker_consent": "AI notetaker consent",
+    "languages": "Languages",
+}
+
+
+def profile_quick_answers(profile: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """The candidate's common form answers, labelled, from the private profile."""
+    answers: list[tuple[str, str]] = []
+    personal = profile.get("personal") or {}
+    name = str(personal.get("name") or "").strip()
+    if name:
+        first, _, last = name.partition(" ")
+        answers += [("Full name", name), ("First name", first)]
+        if last:
+            answers.append(("Last name", last))
+    for key, label in (
+        ("email", "Email"),
+        ("phone", "Phone"),
+        ("location", "Location"),
+        ("linkedin", "LinkedIn"),
+        ("github", "GitHub"),
+        ("website", "Website"),
+    ):
+        if personal.get(key):
+            answers.append((label, str(personal[key])))
+    authorization = profile.get("work_authorization") or {}
+    for key, label in (
+        ("authorized_to_work_in_us", "Authorized to work in the US"),
+        ("requires_sponsorship", "Requires visa sponsorship now or in the future"),
+    ):
+        if key in authorization and authorization[key] is not None:
+            answers.append((label, _plain(authorization[key])))
+    education = profile.get("education") or []
+    if education and isinstance(education[0], Mapping):
+        school = education[0]
+        for key, label in (
+            ("institution", "School"),
+            ("degree", "Degree"),
+            ("graduation_date", "Graduation date"),
+        ):
+            if school.get(key):
+                answers.append((label, str(school[key])))
+    saved = profile.get("application_answers") or {}
+    for key, label in _ANSWER_LABELS.items():
+        if key in saved and saved[key] not in (None, "", []):
+            answers.append((label, _plain(saved[key])))
+    for key, value in (saved.get("eeo") or {}).items():
+        label = "Voluntary self-identification: " + str(key).replace("_", " ")
+        text = "Decline to self-identify" if str(value) == "decline" else _plain(value)
+        answers.append((label, text))
+    return answers
+
+
+def _plain(value: Any) -> str:
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, list | tuple):
+        return ", ".join(str(item) for item in value)
+    return str(value)
 
 
 def _value(row: FieldRow) -> str:

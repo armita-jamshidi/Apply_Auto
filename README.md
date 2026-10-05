@@ -131,7 +131,7 @@ RESUME_PATH=profile/my_resume.pdf
 
 Relative paths are resolved from the project root. Without `RESUME_PATH`, the default is `profile/resume.pdf`; `--resume` overrides both. Resume PDFs under `profile/` are ignored by Git.
 
-After every dry run, an HTML review page is saved under the ignored `reviews/` directory (override with `--review`). Open it in a browser to check:
+After every dry run, an HTML review page is saved under the ignored `reviews/` directory (override with `--review`). It always ends with **Your details**, your common form answers with Copy buttons, so it is useful even when the form could not be read. Open it in a browser to check:
 
 - the job title, company, URL, outcome, and screenshot link;
 - the fit score, reasons, and dealbreakers: a stored score from the database when one exists, otherwise a fresh Anthropic score of the job description, or a note explaining why the job was not scored;
@@ -233,6 +233,7 @@ serves the dashboard at `http://127.0.0.1:8765/` and opens it: every discovered 
 Discovery and every `job-apply` run refresh the page. The page is served from your own computer and is reachable only there; `job-run` opens it when it finishes. Leave that terminal open while you use it; Ctrl+C stops it. Every row has:
 
 - **Mark applied**: click it once you submit. The job moves to Applied with today's date, and the button becomes **Applied ✓ · Undo**, which puts the job back where it was.
+- **Apply panel**: opens a sidebar for applying in your own browser, which also works on sites whose bot checks reject automated browsers (such as SmartRecruiters). It links to the company's application, lists every prepared answer and draft for that job, and shows your details (name, email, phone, links, work authorization, school, saved answers) with Copy buttons. Paste any question from the form into **Ask about a question** for a grounded answer or draft from your profile, resume, and source library; it is saved with the job.
 - **Remove**: hides a job you decide is not a fit, with Undo. Removed jobs stay in the database so discovery never adds them back.
 
 `dashboard.html` is still written as a view-only copy (`job-dashboard --file` opens it). Opened that way, the page shows a banner and the buttons show the equivalent command instead: `python -m agent.dashboard --mark-applied "JOB URL"`, `--mark-new`, `--mark-skipped`, or `--mark-removed`.

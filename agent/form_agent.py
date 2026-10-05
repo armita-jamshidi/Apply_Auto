@@ -639,7 +639,7 @@ def main(argv: list[str] | None = None) -> int:
         default_resume_path,
         launch_hand_off_browser,
     )
-    from agent.applier.review import write_review_page
+    from agent.applier.review import profile_quick_answers, write_review_page
     from agent.dashboard import refresh_dashboard
 
     for stream in (sys.stdout, sys.stderr):
@@ -701,6 +701,7 @@ def main(argv: list[str] | None = None) -> int:
                 resume_name=resume.name,
                 resume_file=str(resume.resolve()),
                 form_url=args.job_url,
+                quick_answers=profile_quick_answers(load_profile(args.profile)),
             )
             print(f"\nReview page: {review}")
             print(result.field_notes.get("Agent summary", ""))
