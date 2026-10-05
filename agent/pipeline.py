@@ -393,11 +393,11 @@ def main(argv: list[str] | None = None) -> int:
             linked = resolve_application_links(session)
             if linked:
                 print(f"Found the company's own application for {linked} jobs.")
-            if not args.no_company_pages and settings.careers_agent_limit > 0:
+            if not args.no_company_pages:
                 retitled = check_company_pages(
                     session,
                     model=settings.careers_agent_model,
-                    limit=settings.careers_agent_limit,
+                    agent_limit=settings.careers_agent_limit,
                 )
                 print(f"Updated {retitled} jobs from the companies' own careers pages.")
             removed = remove_out_of_scope_jobs(session, settings)

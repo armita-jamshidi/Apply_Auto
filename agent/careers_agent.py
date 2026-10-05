@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -48,7 +49,9 @@ from agent.sources.company_apply import (
     _is_aggregator,
     board_job_url,
     links_in,
+    titles_match,
 )
+from agent.sources.new_grad_list import board_from_url
 from agent.types import FILLABLE_PLATFORMS, JobListing
 from db.models import Job
 
@@ -100,6 +103,12 @@ APPLICATION_HOSTS = (
     "adp.com",
 )
 _APPLY_TEXT = re.compile(r"\s*(?:apply|i'?m interested|start (?:your )?application)\b", re.I)
+_OPENINGS_TEXT = re.compile(
+    r"open (?:roles|positions|jobs)|(?:view|see|search|browse|explore) (?:all )?"
+    r"(?:jobs|roles|openings|opportunities|positions|job postings)|current openings|"
+    r"job openings|opportunities",
+    re.IGNORECASE,
+)
 _DATE_POSTED = re.compile(r'"datePosted"\s*:\s*"([^"]+)"')
 _CAREERS_WORDS = re.compile(
     r"career|jobs?\b|opening|position|join|hiring|work[- ]with|apply|role|team", re.I
@@ -116,7 +125,8 @@ How to work:
 - Use fetch_page on the careers or jobs page and follow its links to the job listing.
   Many companies host their careers page on Greenhouse, Lever, Ashby, SmartRecruiters,
   Workable, Recruitee, or BambooHR; when a page links to one, list_board reads every job on
-  it faster than fetching pages.
+  it faster than fetching pages. Workday career sites (*.myworkdayjobs.com) draw their
+  job lists with JavaScript; use search_workday on them instead of fetch_page.
 - Once you find the role in a list, open the role's own page with fetch_page and report
   that page (or its application form, when the posting's Apply button leads to one you
   opened). A list of jobs is not the role's page. The application link on the role's page
@@ -162,6 +172,27 @@ TOOLS: list[dict[str, Any]] = [
                 "board": {"type": "string"},
             },
             "required": ["platform", "board"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "search_workday",
+        "description": (
+            "Search a company's Workday career site (a *.myworkdayjobs.com link) for jobs "
+            "matching a title: title, location, and URL of each match."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "site_url": {
+                    "type": "string",
+                    "description": "Any link into the career site, for example "
+                    "https://acme.wd5.myworkdayjobs.com/acme_careers.",
+                },
+                "title": {"type": "string"},
+            },
+            "required": ["site_url", "title"],
             "additionalProperties": False,
         },
     },
@@ -221,6 +252,8 @@ class Outcome:
 
     role: CompanyRole | None
     reason: str
+    # The search could not finish (for example the API was unavailable): try again later.
+    retry: bool = False
 
 
 class _HtmlReader(HTMLParser):
@@ -363,6 +396,22 @@ class SiteReader:
                     page = rendered
         return page
 
+    def post_json(self, url: str, payload: Mapping[str, Any]) -> Any | None:
+        """POST a JSON search the way a careers site's own page does, if robots.txt allows."""
+        host = (urlsplit(url).hostname or "").casefold()
+        if host in self._blocked_hosts or not self.allowed(url):
+            return None
+        try:
+            response = self._client.post(url, json=dict(payload))
+        except httpx.HTTPError:
+            return None
+        if response.status_code in (401, 403, 429, 503):
+            self._blocked_hosts.add(host)
+            return None
+        if response.status_code != 200 or "json" not in response.headers.get("content-type", ""):
+            return None
+        return response.json()
+
     def close(self) -> None:
         self._client.close()
 
@@ -492,7 +541,26 @@ class CareersAgent:
             return self._list_board(
                 str(arguments.get("platform", "")), str(arguments.get("board", ""))
             )
+        if name == "search_workday":
+            return self._search_workday(
+                str(arguments.get("site_url", "")), str(arguments.get("title", ""))
+            )
         return {"error": f"Unknown tool {name!r}."}
+
+    def _search_workday(self, site_url: str, title: str) -> dict[str, Any]:
+        site = workday_site(site_url)
+        if site is None:
+            return {"error": "Not a Workday career site link (*.myworkdayjobs.com/<site>)."}
+        jobs = workday_postings(site, title, self.reader)
+        for listing in jobs:
+            self.listings[_url_key(listing.url)] = listing
+        return {
+            "site": site,
+            "jobs": [
+                {"title": item.title, "location": item.location_raw, "url": item.url}
+                for item in jobs
+            ],
+        }
 
     def _fetch_page(self, url: str) -> dict[str, Any]:
         page = self.reader.read(url)
@@ -571,6 +639,198 @@ class CareersAgent:
             posted_at = page.posted_at
         application = application_link(page) if page is not None and listing is None else None
         return Outcome(CompanyRole(url, title, reason, listing, posted_at, application), reason)
+
+
+CAREERS_PATHS = ("/careers", "/jobs", "/careers/jobs", "/company/careers", "/join-us")
+DOMAIN_ENDINGS = (".com", ".ai", ".io", ".co")
+_NAME_NOISE = re.compile(
+    r"\b(?:inc|llc|ltd|corp|corporation|co|company|group|holdings|technologies|technology)\b\.?",
+    re.IGNORECASE,
+)
+
+
+def find_without_model(
+    job: Mapping[str, str], reader: SiteReader, boards: BoardCache
+) -> CompanyRole | None:
+    """Find a role on the company's careers page with plain page reads and no model calls.
+
+    The company's site comes from links in the posting or is guessed from its name. A
+    careers page counts only when it names the company; the role is a link on it whose text
+    is the same title (or a job on a board it links to), and its page is then read.
+    """
+    name_words = _name_words(job["company"])
+    if not name_words:
+        return None
+    for site in company_sites(job):
+        for path in CAREERS_PATHS:
+            page = reader.read(site + path)
+            if page.blocked or not page.text:
+                continue
+            text = _comparable(f"{page.title} {page.text}")
+            if not all(word in text for word in name_words):
+                break  # this site is not the company's (or not one we may read)
+            role = _role_on_careers_page(job, page, reader, boards)
+            if role is not None:
+                return role
+    return None
+
+
+def company_sites(job: Mapping[str, str]) -> list[str]:
+    """Likely homepages for the hiring company: linked from the posting, then guessed."""
+    sites: list[str] = []
+    for link in links_in(job.get("description", "")):
+        host = (urlsplit(link).hostname or "").casefold().removeprefix("www.")
+        if host and not _is_aggregator(host) and not _on_application_host(link):
+            sites.append(f"https://{host}")
+    words = _name_words(job["company"])
+    if words:
+        for ending in DOMAIN_ENDINGS:
+            sites.append(f"https://{''.join(words)}{ending}")
+        if len(words) > 1:
+            sites.append(f"https://{'-'.join(words)}.com")
+    return list(dict.fromkeys(sites))[:6]
+
+
+def _role_on_careers_page(
+    job: Mapping[str, str],
+    page: Page,
+    reader: SiteReader,
+    boards: BoardCache,
+    *,
+    follow: bool = True,
+) -> CompanyRole | None:
+    """The role on a careers page: a link to it, a job board it links to, or one hop on."""
+    role = _role_linked_from(job, page, reader, boards)
+    if role is not None or not follow:
+        return role
+    # The careers page often only links to the list of openings ("View open positions").
+    site = (urlsplit(page.url).hostname or "").casefold().removeprefix("www.")
+    for text, link in page.links[:200]:
+        host = (urlsplit(link).hostname or "").casefold().removeprefix("www.")
+        if host != site or not _OPENINGS_TEXT.search(text) or _url_key(link) == _url_key(page.url):
+            continue
+        openings = reader.read(link)
+        if not openings.blocked:
+            role = _role_on_careers_page(job, openings, reader, boards, follow=False)
+            if role is not None:
+                return role
+    return None
+
+
+def _role_linked_from(
+    job: Mapping[str, str], page: Page, reader: SiteReader, boards: BoardCache
+) -> CompanyRole | None:
+    for text, link in page.links:
+        if not titles_match(job["title"], text) or not link.startswith("https://"):
+            continue
+        if _seniority(text) - _seniority(job["title"]):
+            continue
+        role_page = reader.read(link)
+        # The role's own page must show the same title the careers page linked it by.
+        shown = _comparable(f"{role_page.title}\n{role_page.text}")
+        if role_page.blocked or _comparable(text) not in shown:
+            continue
+        return CompanyRole(
+            role_page.url,
+            _squash(text),
+            "Same title on the company's careers page.",
+            posted_at=role_page.posted_at,
+            application_url=application_link(role_page),
+        )
+    for _text, link in page.links:
+        board = board_from_url(link)
+        if board is None or board[0] not in BOARD_FETCHERS:
+            continue
+        matches = [item for item in boards.jobs(*board) if titles_match(job["title"], item.title)]
+        if len(matches) == 1:
+            listing = matches[0]
+            return CompanyRole(
+                listing.url,
+                listing.title,
+                "Same title on the company's job board, linked from its careers page.",
+                listing,
+                listing.posted_at,
+            )
+    searched: set[str] = set()
+    for _text, link in page.links:
+        site = workday_site(link)
+        if site is None or site in searched:
+            continue
+        searched.add(site)
+        role = _search_workday(job, site, reader)
+        if role is not None:
+            return role
+    return None
+
+
+def _search_words(title: str) -> str:
+    """A title as plain search words, without notes such as "(Remote)" or "| $85/hr"."""
+    core = re.sub(r"[(\[].*?[)\]]", " ", title.split(" | ")[0])
+    return " ".join(re.findall(r"[A-Za-z0-9+#.]+", core)).strip(" .")
+
+
+def workday_site(link: str) -> str | None:
+    """The career site root of a Workday link ('https://acme.wd5.myworkdayjobs.com/acme')."""
+    parts = urlsplit(link)
+    host = (parts.hostname or "").casefold()
+    if not host.endswith(".myworkdayjobs.com"):
+        return None
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if segments and re.fullmatch(r"[a-z]{2}-[A-Z]{2}", segments[0]):
+        segments = segments[1:]  # a locale such as en-US
+    if not segments:
+        return None
+    return f"https://{host}/{segments[0]}"
+
+
+def workday_postings(site: str, search: str, reader: SiteReader) -> list[JobListing]:
+    """Jobs on a Workday career site matching a search, read the way its own page reads them."""
+    host = urlsplit(site).hostname or ""
+    site_name = site.rstrip("/").rsplit("/", 1)[-1]
+    tenant = host.split(".")[0]
+    found = reader.post_json(
+        f"https://{host}/wday/cxs/{tenant}/{site_name}/jobs",
+        # Plain words: Workday reads punctuation such as " - " as search operators.
+        {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": _search_words(search)},
+    )
+    postings = found.get("jobPostings") if isinstance(found, dict) else None
+    return [
+        JobListing(
+            "workday",
+            "workday",
+            tenant,
+            _squash(str(posting["title"])),
+            f"{site}{posting['externalPath']}",
+            str(posting.get("locationsText") or ""),
+            "",
+        )
+        for posting in postings or []
+        if isinstance(posting, dict)
+        and posting.get("title")
+        and str(posting.get("externalPath") or "").startswith("/job/")
+    ]
+
+
+def _search_workday(job: Mapping[str, str], site: str, reader: SiteReader) -> CompanyRole | None:
+    """The one posting on a Workday career site with the job's title, if there is one."""
+    matches = [
+        listing
+        for listing in workday_postings(site, job["title"], reader)
+        if titles_match(job["title"], listing.title)
+        and not _seniority(listing.title) - _seniority(job["title"])
+    ]
+    if len(matches) != 1:
+        return None
+    return CompanyRole(
+        matches[0].url,
+        matches[0].title,
+        "Same title on the company's Workday career site, linked from its careers page.",
+        matches[0],
+    )
+
+
+def _name_words(company: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", _NAME_NOISE.sub(" ", company.casefold()))
 
 
 def find_company_role(
@@ -662,20 +922,31 @@ def check_company_pages(
     session: Session,
     *,
     model: str,
-    limit: int | None = None,
+    agent_limit: int | None = None,
     jobs: list[Job] | None = None,
     client: Anthropic | None = None,
     workers: int = 4,
 ) -> int:
     """Look up third-party jobs on their companies' sites; return how many were updated.
 
-    Each job is checked once; its check time is stored whether or not the role was found.
+    Every job's careers page is read without a model first. The agent then searches for at
+    most agent_limit of the jobs that lookup cannot place (all of them when None), newest
+    postings first. Each job is checked once, whether or not the role was found; a job the
+    agent did not reach, or whose search could not finish (for example the API was
+    unavailable), is tried again on a later run.
     """
-    jobs = jobs if jobs is not None else jobs_to_check(session, limit)
+    jobs = jobs if jobs is not None else jobs_to_check(session)
     if not jobs:
         return 0
-    client = client or _create_client()
     boards = BoardCache()
+    slot_lock = threading.Lock()
+    clients: list[Anthropic] = [client] if client is not None else []
+
+    def model_client() -> Anthropic:
+        if not clients:
+            clients.append(_create_client())
+        return clients[0]
+
     details = [
         {
             "company": job.company,
@@ -687,23 +958,43 @@ def check_company_pages(
         for job in jobs
     ]
 
+    agent_slots = [agent_limit if agent_limit is not None else len(jobs)]
+
+    def take_agent_slot() -> bool:
+        with slot_lock:
+            if agent_slots[0] <= 0:
+                return False
+            agent_slots[0] -= 1
+            return True
+
     def search(detail: dict[str, str]) -> Outcome:
         renderer = BrowserRenderer()
         reader = SiteReader(renderer=renderer)
         try:
+            role = find_without_model(detail, reader, boards)
+            if role is not None:
+                return Outcome(role, role.reason)
+            if not take_agent_slot():
+                return Outcome(
+                    None, "Not on the company's careers page; the agent runs later.", retry=True
+                )
             return find_company_role(
-                detail, client=client, model=model, reader=reader, boards=boards
+                detail, client=model_client(), model=model, reader=reader, boards=boards
             )
-        except (anthropic.APIError, httpx.HTTPError) as error:
+        except anthropic.APIError as error:
+            return Outcome(None, f"The search could not finish: {error}", retry=True)
+        except httpx.HTTPError as error:
             return Outcome(None, f"The search failed: {error}")
         finally:
             reader.close()
             renderer.close()
 
     updated = 0
+    # Results come back in job order, so the newest postings get the agent first.
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for job, outcome in zip(jobs, pool.map(search, details), strict=True):
-            job.company_page_checked_at = datetime.now(UTC)
+            if not outcome.retry:
+                job.company_page_checked_at = datetime.now(UTC)
             if outcome.role is not None and apply_role(session, job, outcome.role):
                 updated += 1
                 listed = f" (listed as {job.listed_title!r})" if job.listed_title else ""
@@ -759,7 +1050,12 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--job-id", type=int, action="append", help="Check this job (repeatable).")
-    parser.add_argument("--limit", type=int, default=None, help="Check at most this many jobs.")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Let the agent search for at most this many jobs (the free lookup checks all).",
+    )
     parser.add_argument(
         "--recheck", action="store_true", help="Check the given --job-id jobs again."
     )
@@ -786,7 +1082,9 @@ def main(argv: list[str] | None = None) -> int:
             updated = check_company_pages(
                 session,
                 model=settings.careers_agent_model,
-                limit=args.limit if args.limit is not None else settings.careers_agent_limit,
+                agent_limit=(
+                    args.limit if args.limit is not None else settings.careers_agent_limit
+                ),
                 jobs=jobs,
             )
             print(f"Updated {updated} jobs from the companies' own sites.")

@@ -200,11 +200,14 @@ job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/
 Jobs found on Himalayas, We Work Remotely, or Hacker News carry the board's wording of the title and link to the board. The careers agent looks each one up on the hiring company's own site and uses the company's version:
 
 ```powershell
-job-company-pages              # the next jobs not yet checked (careers_agent_limit)
+job-company-pages              # every job not yet checked
+job-company-pages --limit 0    # free lookup only, no model calls
 job-company-pages --job-id 134 --recheck
 ```
 
-It runs a Claude tool loop (`careers_agent_model`, default `claude-sonnet-5-5`) with web search to find the company's careers page, a page reader, and a reader for the company's public job boards. It follows the listing to the role's own page and reports the page and the title. Code checks the report before anything changes:
+Every job is first looked up without a model: the company's site is taken from links in the posting or guessed from its name (accepted only when its careers page names the company), and the role is found as a link on the careers page, on a job board it links to (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee, BambooHR), on its Workday career site through the search that site's own page uses, or one hop on through a "View open positions" link. Only the jobs that lookup cannot place go to the agent, at most `discovery.careers_agent_limit` per run (default 5); the rest wait for a later run, as do jobs whose search could not finish (for example when the API is unavailable). On the dashboard, a job still linking to a job board says whether its company page was looked up.
+
+The agent runs a Claude tool loop (`careers_agent_model`, default `claude-sonnet-5-5`) with web search to find the company's careers page, a page reader, a reader for the company's public job boards, and a Workday career site search. It follows the listing to the role's own page and reports the page and the title. Code checks the report before anything changes:
 
 - the page must be one a tool actually returned (an unopened search result is opened first);
 - the title must appear whole on that page, as the link text that led to it, or as the board listing's title, so the dashboard shows the company's exact wording (a shorter title inside a longer one, such as "AI Engineer" in "Applied AI Engineer", does not count);

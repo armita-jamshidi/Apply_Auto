@@ -12,6 +12,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
 from agent.settings import PROJECT_ROOT, load_settings
+from agent.sources.company_apply import _is_aggregator
 from agent.tracking import REMOVED, mark_job
 from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Application, Job
@@ -589,6 +591,15 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
     links = [f"<a href='{escape(apply)}' class='apply-link'>Apply</a>"]
     if apply != job.url:
         links.append(f"<a href='{escape(job.url)}'>Posting</a>")
+    if _is_aggregator((urlsplit(apply).hostname or "").casefold()) and not is_fillable(
+        job.platform, apply
+    ):
+        note = (
+            "Not on the company's site"
+            if job.company_page_checked_at is not None
+            else "Company page not looked up yet"
+        )
+        links.append(f"<div class='muted'>{note}</div>")
     if row.latest and row.latest.review_path:
         review = Path(row.latest.review_path)
         if review.is_file():

@@ -13,11 +13,13 @@ from agent import dashboard
 from agent.careers_agent import (
     CareersAgent,
     CompanyRole,
+    Outcome,
     Page,
     SiteReader,
     application_link,
     apply_role,
     check_company_pages,
+    find_without_model,
     read_html,
 )
 from agent.filters import persist_job_if_new
@@ -274,6 +276,7 @@ def test_each_job_is_checked_once(session, monkeypatch: pytest.MonkeyPatch) -> N
         return Outcome(None, "Not listed.")
 
     monkeypatch.setattr("agent.careers_agent.find_company_role", fake_find)
+    monkeypatch.setattr("agent.careers_agent.find_without_model", lambda *_args: None)
 
     check_company_pages(session, model="m", client=object())
     check_company_pages(session, model="m", client=object())
@@ -331,3 +334,118 @@ def test_a_postings_apply_button_leads_to_its_application_form() -> None:
     assert application_link(page) == "https://acme.example/careers/ai-engineer/apply"
     page.links = page.links[:1]
     assert application_link(page) is None
+
+
+ACME_CAREERS = """<html><head><title>Careers | Acme</title></head><body>
+<h1>Join Acme</h1><a href="https://acme.com/careers/ai-engineer">AI Engineer</a>
+<a href="https://acme.com/careers/senior-ai-engineer">Senior AI Engineer</a></body></html>"""
+ACME_ROLE = """<html><head><title>AI Engineer - Acme</title></head><body>
+<h1>AI Engineer</h1><p>Build agents at Acme.</p>
+<a href="https://acme.zohorecruit.com/jobs/Careers/1/AI-Engineer">Apply</a></body></html>"""
+
+
+def _site(pages: dict[str, str]) -> FakeReader:
+    return FakeReader({url: read_html(html, url) for url, html in pages.items()})
+
+
+def test_free_lookup_finds_the_role_on_the_careers_page_without_a_model() -> None:
+    reader = _site(
+        {
+            "https://acme.com/careers": ACME_CAREERS,
+            "https://acme.com/careers/ai-engineer": ACME_ROLE,
+        }
+    )
+    job = {"company": "Acme, Inc.", "title": "AI Engineer", "description": ""}
+
+    role = find_without_model(job, reader, BoardCache({}))
+
+    assert role.url == "https://acme.com/careers/ai-engineer"
+    assert role.title == "AI Engineer"
+    assert role.application_url == "https://acme.zohorecruit.com/jobs/Careers/1/AI-Engineer"
+
+
+def test_free_lookup_ignores_a_site_that_does_not_name_the_company() -> None:
+    reader = _site(
+        {
+            "https://acme.com/careers": ACME_CAREERS.replace("Acme", "Other Co"),
+            "https://acme.com/careers/ai-engineer": ACME_ROLE,
+        }
+    )
+    job = {"company": "Acme", "title": "AI Engineer", "description": ""}
+
+    assert find_without_model(job, reader, BoardCache({})) is None
+
+
+def test_free_lookup_reads_the_board_the_careers_page_links_to() -> None:
+    listing = JobListing(
+        "lever", "lever", "Acme", "AI Engineer", "https://jobs.lever.co/acme/1", "", "Agents."
+    )
+    reader = _site(
+        {
+            "https://acme.ai/careers": "<html><title>Acme careers</title><body>Work at Acme."
+            '<a href="https://jobs.lever.co/acme">Open roles</a></body></html>'
+        }
+    )
+    boards = BoardCache({"lever": lambda *_args, **_kwargs: [listing]})
+    job = {"company": "Acme", "title": "AI Engineer", "description": ""}
+
+    role = find_without_model(job, reader, boards)
+
+    assert role.listing == listing and role.url == listing.url
+
+
+def test_agent_searches_are_capped_but_free_lookups_cover_every_job(
+    session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _job(session, url="https://himalayas.app/companies/a/jobs/1", company="A")
+    second = _job(session, url="https://himalayas.app/companies/b/jobs/2", company="B")
+    looked_up: list[str] = []
+    monkeypatch.setattr(
+        "agent.careers_agent.find_without_model",
+        lambda job, *_args: looked_up.append(job["company"]),
+    )
+    monkeypatch.setattr(
+        "agent.careers_agent.find_company_role",
+        lambda *_args, **_kwargs: Outcome(None, "Not listed."),
+    )
+
+    check_company_pages(session, model="m", client=object(), agent_limit=1, workers=1)
+
+    assert sorted(looked_up) == ["A", "B"]
+    checked = [job for job in (first, second) if job.company_page_checked_at is not None]
+    assert len(checked) == 1  # the other waits for the agent on a later run
+
+
+class WorkdayReader(FakeReader):
+    """A careers site whose openings are on Workday, searched through its JSON endpoint."""
+
+    def __init__(self, pages: dict[str, Page], postings: list[dict]) -> None:
+        super().__init__(pages)
+        self.postings = postings
+        self.searches: list[str] = []
+
+    def post_json(self, url: str, payload: dict) -> dict:
+        assert url == "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/careers/jobs"
+        self.searches.append(payload["searchText"])
+        return {"jobPostings": self.postings}
+
+
+def test_free_lookup_searches_the_workday_site_the_careers_page_links_to() -> None:
+    careers = read_html(
+        "<html><title>Careers at Acme</title><body>Join Acme."
+        '<a href="https://acme.wd5.myworkdayjobs.com/en-US/careers">View open positions</a>'
+        "</body></html>",
+        "https://acme.com/careers",
+    )
+    postings = [
+        {"title": "AI Engineer - Agents (Remote)", "externalPath": "/job/Remote/AI-Engineer_R1"},
+        {"title": "Senior AI Engineer - Agents", "externalPath": "/job/Remote/Senior_R2"},
+    ]
+    reader = WorkdayReader({"https://acme.com/careers": careers}, postings)
+    job = {"company": "Acme", "title": "AI Engineer - Agents", "description": ""}
+
+    role = find_without_model(job, reader, BoardCache({}))
+
+    assert role.title == "AI Engineer - Agents (Remote)"
+    assert role.url == "https://acme.wd5.myworkdayjobs.com/careers/job/Remote/AI-Engineer_R1"
+    assert reader.searches == ["AI Engineer Agents"]  # no " - " for Workday to misread
