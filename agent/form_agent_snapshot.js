@@ -9,6 +9,27 @@
     return el.getClientRects().length > 0;
   };
   const text = (el) => (el ? (el.innerText || el.textContent || '') : '').replace(/\s+/g, ' ').trim();
+  const FIELDS = 'input:not([type=hidden]), textarea, select, [role=combobox], [role=checkbox], ' +
+    '[role=radio], [role=textbox], [contenteditable=true]';
+  const LABELS = 'label, legend, [class*=label], [class*=Label], [class*=question], h3, h4';
+  // The question printed near a field that is not linked to it in code (common on custom
+  // forms): the closest label-like text in the smallest surrounding box, stopping once the
+  // box holds another field. skip lists texts that are not the question (option labels).
+  const nearbyLabel = (el, skip = []) => {
+    let box = el.parentElement;
+    for (let i = 0; i < 6 && box && box !== document.body; i++, box = box.parentElement) {
+      const found = Array.from(box.querySelectorAll(LABELS)).find((label) => {
+        const words = text(label);
+        return !label.contains(el) && !label.querySelector(FIELDS) &&
+          words.replace(/[^A-Za-z0-9]/g, '').length >= 3 && !skip.includes(words);
+      });
+      if (found) return text(found).slice(0, 300);
+      const others = Array.from(box.querySelectorAll(FIELDS))
+        .filter((other) => other !== el && !el.contains(other) && !other.contains(el));
+      if (others.length && !skip.length) return '';
+    }
+    return '';
+  };
   const labelOf = (el) => {
     const parts = [];
     const aria = el.getAttribute('aria-label');
@@ -20,6 +41,10 @@
       const field = el.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id]');
       const legend = field && field.querySelector('legend, label, [id$=label], h3, h4');
       if (legend && legend !== el) parts.push(text(legend));
+    }
+    if (!parts.join('').trim() && el.type !== 'file') {
+      const near = nearbyLabel(el);
+      if (near) parts.push(near);
     }
     if (!parts.join('').trim() && el.type === 'file') {
       // An unlabelled upload: name it by the nearest text around it ("Resume", "Browse").
@@ -38,9 +63,28 @@
   };
   const groupOf = (el) => {
     const group = el.closest('fieldset, [role=radiogroup], [role=group]');
-    if (!group) return '';
-    const legend = group.querySelector('legend') || document.getElementById(group.getAttribute('aria-labelledby') || '');
-    return text(legend) || group.getAttribute('aria-label') || '';
+    if (group) {
+      const legend = group.querySelector('legend') || document.getElementById(group.getAttribute('aria-labelledby') || '');
+      const named = text(legend) || group.getAttribute('aria-label') || '';
+      if (named) return named;
+    }
+    if ((el.type === 'checkbox' || el.type === 'radio') && el.name) {
+      // Options sharing a name answer one question, printed outside the box that holds
+      // all the options (their own texts are inside it).
+      const options = Array.from(document.getElementsByName(el.name));
+      let group = el.parentElement;
+      while (group && group !== document.body && !options.every((option) => group.contains(option))) {
+        group = group.parentElement;
+      }
+      let box = group && group !== document.body ? group.parentElement : null;
+      for (let i = 0; i < 4 && box && box !== document.body; i++, box = box.parentElement) {
+        const found = Array.from(box.querySelectorAll(LABELS)).find((label) =>
+          !group.contains(label) && !label.contains(group) && !label.querySelector(FIELDS) &&
+          text(label).replace(/[^A-Za-z0-9]/g, '').length >= 3);
+        if (found) return text(found).slice(0, 300);
+      }
+    }
+    return '';
   };
   const selector = 'input:not([type=hidden]), textarea, select, button, a[href], [role=button], ' +
     '[role=combobox], [role=listbox], [role=option], [role=radio], [role=checkbox], ' +

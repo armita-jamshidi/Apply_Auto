@@ -414,3 +414,41 @@ def test_the_candidate_fills_a_blocking_field_and_the_agent_answers_the_next_pag
     assert run.answers["Name"] == "Sam Sample"
     assert run.suggested_answers["Why do you want to work at Acme?"] == draft
     assert run.finished
+
+
+ZOHO_FIELDS = """<!doctype html><html><head><style>
+.box { position: relative; display: inline-block; width: 16px; height: 16px; }
+.box input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.box span { position: absolute; inset: 0; border: 1px solid #333; }
+</style></head><body>
+<div class="row"><div class="fieldLabel">Experience in Years *</div>
+  <div class="value"><input type="text" id="years"></div></div>
+<div class="row"><div class="fieldLabel">Applicant Type *</div>
+  <div class="value"><div role="combobox" tabindex="0" id="type">-None-</div></div></div>
+<div class="row"><div class="fieldLabel">Which AI tools have you used? *</div>
+  <div class="value">
+    <div><span class="box"><input type="checkbox" name="tools" id="openai"><span></span></span>
+      <label>OpenAI API</label></div>
+    <div><span class="box"><input type="checkbox" name="tools" id="faiss"><span></span></span>
+      <label>FAISS</label></div></div></div>
+</body></html>"""
+
+
+def test_unlinked_questions_are_read_and_styled_checkboxes_get_checked(
+    page, tmp_path: Path
+) -> None:
+    page.set_content(ZOHO_FIELDS)
+    agent = FormAgent(
+        page, profile={}, resume_path=tmp_path / "r.pdf", answerer=None, client=None, model="m"
+    )
+
+    controls = agent._tool_observe_page()["controls"]
+
+    by_tag = {(item.get("type") or item.get("role") or item["tag"]): item for item in controls}
+    assert by_tag["text"]["label"] == "Experience in Years *"
+    assert by_tag["combobox"]["label"] == "Applicant Type *"
+    boxes = [item for item in controls if item.get("type") == "checkbox"]
+    assert {item["group"] for item in boxes} == {"Which AI tools have you used? *"}
+    result = agent._tool_click(boxes[0]["id"], "Which AI tools have you used?")
+    assert result["checked"] is True and page.is_checked("#openai")
+    assert agent.run.answers["Which AI tools have you used?"]

@@ -46,6 +46,20 @@ DEFAULT_MODEL = "claude-opus-5-5"
 MAX_STEPS = 80
 MAX_CONTROLS = 160
 CLICK_TIMEOUT_MS = 8000
+# Whether what sits on top of a control's center belongs to the control's own widget (a
+# styled box over a hidden checkbox) rather than to something else (a cookie banner).
+OWN_WIDGET_ON_TOP_SCRIPT = """el => {
+  const box = el.getBoundingClientRect();
+  if (!box.width || !box.height) return true;
+  const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+  if (!top || top === el || el.contains(top)) return false;
+  let own = el.parentElement;
+  for (let i = 0; i < 4 && own; i++, own = own.parentElement) {
+    if (own.matches('html, body, form, main')) break;
+    if (own.contains(top)) return true;
+  }
+  return false;
+}"""
 ID_ATTRIBUTE = "data-form-agent-id"
 # Clicking one of these would send the application; the agent never does.
 SUBMIT_TEXT = re.compile(
@@ -422,20 +436,31 @@ class FormAgent:
         if ACCOUNT_TEXT.search(words):
             return {"error": "Refused: account creation is for the candidate (use ask_human)."}
         locator = self._locator(control_id)
-        toggle = control.get("type") in {"checkbox", "radio"}
-        try:
-            locator.click(timeout=CLICK_TIMEOUT_MS)
-        except PlaywrightError as error:
-            covered = _covering_element(str(error))
-            if covered:
-                return {
-                    "error": f"Another element covers this control: {covered}. Close it first "
-                    "(for example accept or decline a cookie banner), then try again."
-                }
-            if not toggle:
-                raise
-            # Styled checkboxes are often transparent inputs under a custom box.
-            locator.evaluate("el => el.click()")
+        toggle = control.get("type") in {"checkbox", "radio"} or control.get("role") in {
+            "checkbox",
+            "radio",
+            "switch",
+        }
+        before = locator.is_checked() if toggle else None
+        if toggle and locator.evaluate(OWN_WIDGET_ON_TOP_SCRIPT):
+            # A styled checkbox: the box drawn over the real input is part of the control,
+            # so click through it, and fall back to the input itself if nothing changed.
+            locator.click(force=True, timeout=CLICK_TIMEOUT_MS)
+            if locator.is_checked() == before:
+                locator.evaluate("el => el.click()")
+        else:
+            try:
+                locator.click(timeout=CLICK_TIMEOUT_MS)
+            except PlaywrightError as error:
+                covered = _covering_element(str(error))
+                if covered:
+                    return {
+                        "error": f"Another element covers this control: {covered}. Close it "
+                        "first (for example accept or decline a cookie banner), then try again."
+                    }
+                if not toggle:
+                    raise
+                locator.evaluate("el => el.click()")
         self._settle()
         result: dict[str, Any] = {
             "clicked": control.get("text") or control.get("label"),
