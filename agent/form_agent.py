@@ -751,6 +751,13 @@ def main(argv: list[str] | None = None) -> int:
                 screenshot_path=screenshot,
                 max_steps=args.max_steps,
             )
+            if result.error and not any(value is not None for value in result.answers.values()):
+                # Nothing was read or answered (for example the API had no credits): keep the
+                # job's earlier attempt on the dashboard instead of an empty one.
+                print(f"\nThe agent could not start: {result.error}\nNothing was recorded.")
+                if not args.headless:
+                    _pause("Press Enter to close this window... ")
+                return 1
             write_review_page(
                 review,
                 job=job,
@@ -780,6 +787,13 @@ def main(argv: list[str] | None = None) -> int:
     _track_attempt(job, lookup_url, "agent", result, None, review, submitted=submitted)
     refresh_dashboard()
     return 0
+
+
+def _pause(prompt: str) -> None:
+    try:
+        input(prompt)
+    except EOFError:
+        pass
 
 
 def _no_fit() -> Any:

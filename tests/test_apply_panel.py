@@ -139,3 +139,71 @@ def test_apply_panel_shows_answers_and_asks_new_questions(served) -> None:
         assert attempt.suggested_answers[question] == "I shipped an agent."
         assert attempt.answers[question] is None
         assert attempt.answers["Email"] == "sam@example.com"
+
+
+def test_fill_with_agent_starts_the_agent_on_the_company_form(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "_quick_answers", lambda: [])
+    engine = create_engine(f"sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    factory = create_session_factory(engine)
+    common = {
+        "source": "himalayas",
+        "platform": "himalayas",
+        "company": "Acme",
+        "location_raw": "Remote - US",
+        "location_category": "remote_us",
+        "status": "new",
+    }
+    with factory() as session:
+        session.add_all(
+            [
+                Job(
+                    title="AI Solutions Engineer",
+                    url="https://himalayas.app/companies/acme/jobs/1",
+                    apply_url="https://careers-acme.icims.com/jobs/1/job",
+                    **common,
+                ),
+                Job(
+                    title="ML Engineer",
+                    url="https://himalayas.app/companies/acme/jobs/2",
+                    apply_url="https://himalayas.app/companies/acme/jobs/2",
+                    **common,
+                ),
+            ]
+        )
+        session.commit()
+    started: list[list[str]] = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.make_handler(factory, 0))
+    port = server.server_address[1]
+    server.RequestHandlerClass = dashboard.make_handler(factory, port, launch=started.append)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(chromium_sandbox=True)
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{port}/")
+            assert page.locator("#jobs button.fill").count() == 1  # the board-only job has none
+            page.click("tr[data-title='AI Solutions Engineer'] button.fill")
+            page.wait_for_selector("#toast:not([hidden])")
+            assert "new window" in page.text_content("#toast")
+            page.click("tr[data-title='AI Solutions Engineer'] button.panel-open")
+            assert page.is_visible("#panel-fill")
+            page.click("tr[data-title='ML Engineer'] button.panel-open")
+            assert not page.is_visible("#panel-fill")
+            browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        engine.dispose()
+
+    assert started == [
+        [
+            started[0][0],
+            "-m",
+            "agent.form_agent",
+            "--job-url",
+            "https://careers-acme.icims.com/jobs/1/job",
+            "--lookup-url",
+            "https://himalayas.app/companies/acme/jobs/1",
+        ]
+    ]

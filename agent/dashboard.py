@@ -4,6 +4,8 @@ import argparse
 import json
 import logging
 import re
+import subprocess
+import sys
 import webbrowser
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -114,11 +116,14 @@ def write_dashboard(
         _is_fresh(row.job.posted_at, fresh_since) and row.group not in {"applied", "skipped"}
         for row in rows
     )
-    details = "".join(
-        f"<li><span class='muted'>{escape(label)}</span><pre>{escape(value)}</pre>"
-        f"<button type='button' class='copy' data-copy='{escape(value)}'>Copy</button></li>"
-        for label, value in _quick_answers()
-    ) or "<li class='muted'>Add your details to profile/profile.yaml.</li>"
+    details = (
+        "".join(
+            f"<li><span class='muted'>{escape(label)}</span><pre>{escape(value)}</pre>"
+            f"<button type='button' class='copy' data-copy='{escape(value)}'>Copy</button></li>"
+            for label, value in _quick_answers()
+        )
+        or "<li class='muted'>Add your details to profile/profile.yaml.</li>"
+    )
     counts = {key: sum(row.group == key for row in rows) for key, _, _ in GROUPS}
     filters = "".join(
         f"<button type='button' data-filter='{key}'>{escape(label)} "
@@ -336,7 +341,8 @@ want; removed jobs are not found again.</p>
 <div class="muted" id="panel-company"></div></div>
 <button type="button" id="panel-close" aria-label="Close panel">Close</button></div>
 <p><a id="panel-apply" target="_blank" rel="noopener">Open the application</a>
-<span class="muted"> in your own browser, then copy answers from here.</span></p>
+<span class="muted"> in your own browser, then copy answers from here, or</span>
+<button type="button" id="panel-fill" class="fill">Fill with agent</button></p>
 <h3>This application</h3>
 <div id="panel-answers"></div>
 <h3>Ask about a question</h3>
@@ -372,6 +378,30 @@ document.addEventListener('click', async (event) => {{
     document.getElementById(row.dataset.detail).hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
     toggle.textContent = open ? 'Hide' : 'Details';
+    return;
+  }}
+  const filler = event.target.closest('button.fill');
+  if (filler) {{
+    const jobId = filler.dataset.job || panelJob;
+    if (!LIVE) {{
+      notify('Run "job-dashboard" to start the agent from here.');
+      return;
+    }}
+    filler.disabled = true;
+    try {{
+      const response = await fetch('/jobs/' + jobId + '/fill', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json', 'X-Job-Dashboard': '1' }},
+        body: '{{}}',
+      }});
+      const reply = await response.json();
+      if (!response.ok) throw new Error(reply.error || response.statusText);
+      notify(reply.message);
+    }} catch (error) {{
+      notify('Could not start the agent: ' + error.message);
+    }} finally {{
+      filler.disabled = false;
+    }}
     return;
   }}
   const opener = event.target.closest('button.panel-open');
@@ -424,6 +454,7 @@ function openPanel(row) {{
   document.getElementById('panel-title').textContent = row.dataset.title;
   document.getElementById('panel-company').textContent = row.dataset.company;
   document.getElementById('panel-apply').href = row.dataset.apply;
+  document.getElementById('panel-fill').hidden = !row.querySelector('button.fill');
   const answers = document.getElementById('panel-answers');
   answers.replaceChildren();
   const table = document.querySelector('#' + row.dataset.detail + ' table.answers');
@@ -621,9 +652,16 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
             f"data-status='applied' data-flag='--mark-applied' data-url='{escape(job.url)}'>"
             "Mark applied</button>"
         )
+    fill_button = ""
+    if row.group in {"ready", "new", "location"} and fill_command(job) is not None:
+        fill_button = (
+            f"<button type='button' class='fill' data-job='{job.id}' "
+            "title='Opens the application in a new window and lets the agent fill it; "
+            "you sign in where asked, review, and submit'>Fill with agent</button>"
+        )
     controls = (
         f"<div class='controls'><button type='button' class='panel-open primary' "
-        f"data-job='{job.id}'>Apply panel</button>{applied_button}"
+        f"data-job='{job.id}'>Apply panel</button>{fill_button}{applied_button}"
         f"<button type='button' class='remove' data-job='{job.id}' "
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
@@ -664,6 +702,41 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         f"<tr class='detail' id='{detail_id}' hidden><td colspan='9'>"
         f"{_detail_html(row, fields)}</td></tr>"
     )
+
+
+def fill_command(job: Job) -> list[str] | None:
+    """The command that fills a job's real application in a visible browser, if known.
+
+    Supported boards use their own filler; any other company form uses the form agent.
+    None when the only link is a job board's page, which is not an application form.
+    """
+    if is_fillable(job.platform, job.url):
+        return [
+            sys.executable,
+            "-m",
+            "agent.applier.cli",
+            "--hand-off",
+            "--platform",
+            job.platform,
+            "--job-url",
+            job.url,
+            "--company",
+            job.company,
+            "--title",
+            job.title,
+        ]
+    apply = application_link(job)
+    host = (urlsplit(apply).hostname or "").casefold()
+    if not apply.startswith("https://") or _is_aggregator(host):
+        return None
+    command = [sys.executable, "-m", "agent.form_agent", "--job-url", apply]
+    return command + (["--lookup-url", job.url] if apply != job.url else [])
+
+
+def launch_in_new_window(command: list[str]) -> None:
+    """Start a command in its own console window, so it can ask you to press Enter."""
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    subprocess.Popen(command, cwd=PROJECT_ROOT, creationflags=flags)  # noqa: S603
 
 
 def form_agent_command(apply_url: str, job_url: str) -> str:
@@ -850,9 +923,11 @@ def make_handler(
     session_factory: sessionmaker[Session],
     port: int,
     answer_question: Callable[[Job, str], dict[str, Any]] | None = None,
+    launch: Callable[[list[str]], None] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Request handler that renders the dashboard and saves status changes."""
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    launch = launch or launch_in_new_window
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
@@ -880,7 +955,7 @@ def make_handler(
             body = self.rfile.read(length) if length > 0 else b""
             if not self._trusted():
                 return
-            match = re.fullmatch(r"/jobs/(\d+)/(status|answer)", self.path)
+            match = re.fullmatch(r"/jobs/(\d+)/(status|answer|fill)", self.path)
             # A custom header cannot be sent cross-site without a CORS preflight, which this
             # server never approves, so other web pages cannot change your jobs.
             if match is None or self.headers.get("X-Job-Dashboard") != "1":
@@ -896,6 +971,9 @@ def make_handler(
             if match[2] == "answer":
                 self._answer(int(match[1]), question)
                 return
+            if match[2] == "fill":
+                self._fill(int(match[1]))
+                return
             with session_factory() as session:
                 job = session.get(Job, int(match[1]))
                 if job is None:
@@ -909,6 +987,31 @@ def make_handler(
                 session.commit()
                 LOGGER.info("Marked %s - %s as %s", job.company, job.title, status)
             self._json(200, {"status": status})
+
+        def _fill(self, job_id: int) -> None:
+            with session_factory() as session:
+                job = session.get(Job, job_id)
+                command = fill_command(job) if job is not None else None
+                if job is not None:
+                    title, company = job.title, job.company
+            if command is None:
+                self._json(400, {"error": "No application form is known for this job yet."})
+                return
+            try:
+                launch(command)
+            except OSError as error:
+                self._json(500, {"error": f"Could not start the agent: {error}"})
+                return
+            LOGGER.info("Started the agent on %s - %s", company, title)
+            self._json(
+                200,
+                {
+                    "message": "The agent is opening the application in a new window. If it "
+                    "asks you to sign in or do a CAPTCHA, do it in that window, then press "
+                    "Enter in the agent's console. It never submits; its answers appear here "
+                    "when it finishes (reload the page)."
+                },
+            )
 
         def _answer(self, job_id: int, question: str) -> None:
             if not question:
