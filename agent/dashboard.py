@@ -7,7 +7,7 @@ import re
 import webbrowser
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -54,8 +54,12 @@ class DashboardRow:
     applied_at: datetime | None
 
 
-def dashboard_rows(session: Session) -> list[DashboardRow]:
-    """Return every job, grouped and ordered: what needs you first, then new by fit."""
+def dashboard_rows(session: Session, *, fresh_days: int = 7) -> list[DashboardRow]:
+    """Return every job, grouped and ordered: what needs you first, then new by fit.
+
+    Within each group, postings at most fresh_days old come first, so you can apply early.
+    """
+    fresh_since = datetime.now(UTC) - timedelta(days=fresh_days)
     jobs = session.scalars(
         select(Job).options(selectinload(Job.applications)).where(Job.status != REMOVED)
     ).all()
@@ -81,6 +85,7 @@ def dashboard_rows(session: Session) -> list[DashboardRow]:
         rows,
         key=lambda row: (
             order[row.group],
+            not _is_fresh(row.job.posted_at, fresh_since),
             -(row.job.fit_score if row.job.fit_score is not None else -1),
             -_aware(row.applied_at or row.job.first_seen_at).timestamp(),
             row.job.company.casefold(),
@@ -89,13 +94,24 @@ def dashboard_rows(session: Session) -> list[DashboardRow]:
 
 
 def write_dashboard(
-    session: Session, path: Path | None = None, *, fit_threshold: int | None = None
+    session: Session,
+    path: Path | None = None,
+    *,
+    fit_threshold: int | None = None,
+    fresh_days: int | None = None,
 ) -> list[DashboardRow]:
     """Write the dashboard page and return its rows."""
     path = path or DASHBOARD_PATH
-    if fit_threshold is None:
-        fit_threshold = load_settings().fit_score_threshold
-    rows = dashboard_rows(session)
+    if fit_threshold is None or fresh_days is None:
+        settings = load_settings()
+        fit_threshold = settings.fit_score_threshold if fit_threshold is None else fit_threshold
+        fresh_days = settings.fresh_posting_days if fresh_days is None else fresh_days
+    fresh_since = datetime.now(UTC) - timedelta(days=fresh_days)
+    rows = dashboard_rows(session, fresh_days=fresh_days)
+    fresh_count = sum(
+        _is_fresh(row.job.posted_at, fresh_since) and row.group not in {"applied", "skipped"}
+        for row in rows
+    )
     details = "".join(
         f"<li><span class='muted'>{escape(label)}</span><pre>{escape(value)}</pre>"
         f"<button type='button' class='copy' data-copy='{escape(value)}'>Copy</button></li>"
@@ -107,7 +123,7 @@ def write_dashboard(
         f"<span class='count'>{counts[key]}</span></button>"
         for key, label, _ in GROUPS
     )
-    body = "\n".join(_row_html(row, fit_threshold) for row in rows) or (
+    body = "\n".join(_row_html(row, fit_threshold, fresh_since) for row in rows) or (
         "<tr><td colspan='9' class='muted'>No jobs yet. Run discovery: "
         "<code>python -m agent.main</code></td></tr>"
     )
@@ -121,6 +137,7 @@ def write_dashboard(
                 for row in rows
             ),
         ),
+        (f"Posted in the last {fresh_days} days", fresh_count),
         ("Answers ready", sum(_has_answers(row.latest) for row in rows if row.group == "ready")),
         ("Applied", counts["applied"]),
     )
@@ -191,6 +208,8 @@ thead th {{ border-top: 0; color: var(--muted); font-weight: 600; font-size: 0.8
 .links a {{ margin-right: 10px; white-space: nowrap; }}
 .apply-link {{ font-weight: 600; }}
 .posted {{ white-space: nowrap; }}
+.fresh {{ color: var(--applied); margin-left: 6px; }}
+.listed {{ font-size: 0.85rem; }}
 details summary {{ cursor: pointer; color: var(--accent); }}
 pre {{
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; padding: 8px 10px;
@@ -283,6 +302,9 @@ the page it opens.</p>
 <button type="button" data-filter="all" aria-pressed="true">All
 <span class="count">{len(rows)}</span></button>
 {filters}
+<button type="button" data-filter="fresh"
+title="Posted in the last {fresh_days} days and not yet applied">Fresh
+<span class="count">{fresh_count}</span></button>
 <input type="search" id="search" placeholder="Search company or role" aria-label="Search jobs">
 </div>
 <div class="panel table-wrap">
@@ -332,7 +354,8 @@ function apply() {{
   const term = search.value.trim().toLowerCase();
   for (const row of rows) {{
     const groupOk = row.dataset.group !== 'removed'
-      && (active === 'all' || row.dataset.group === active);
+      && (active === 'all' || row.dataset.group === active
+        || (active === 'fresh' && row.dataset.fresh === '1'));
     const textOk = !term || row.dataset.search.includes(term);
     row.hidden = !(groupOk && textOk);
     const detail = document.getElementById(row.dataset.detail);
@@ -548,8 +571,12 @@ def refresh_dashboard(path: Path | None = None) -> Path | None:
         engine.dispose()
 
 
-def _row_html(row: DashboardRow, fit_threshold: int) -> str:
+def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> str:
     job = row.job
+    fresh = _is_fresh(job.posted_at, fresh_since) and row.group not in {"applied", "skipped"}
+    listed = ""
+    if job.listed_title and job.listed_title != job.title:
+        listed = f"<div class='muted listed'>Listed elsewhere as {escape(job.listed_title)}</div>"
     warning = ""
     if job.dealbreakers and row.group != "applied":
         warning = f"<div class='warn'>{escape('; '.join(job.dealbreakers))}</div>"
@@ -597,7 +624,9 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
             # Unknown forms (Workday, company career pages) go to the model-driven form agent.
             command = form_agent_command(apply, job.url)
         finish = f"<details><summary>Finish</summary><pre>{escape(command)}</pre></details>"
-    search_text = escape(f"{job.company} {job.title} {job.location_raw}".casefold())
+    search_text = escape(
+        f"{job.company} {job.title} {job.listed_title or ''} {job.location_raw}".casefold()
+    )
     detail_id = f"detail-{job.id}"
     fields = _answer_rows(row.latest)
     answered = ""
@@ -607,15 +636,16 @@ def _row_html(row: DashboardRow, fit_threshold: int) -> str:
     return (
         f"<tr data-group='{row.group}' data-search='{search_text}' data-detail='{detail_id}' "
         f"data-job='{job.id}' data-company='{escape(job.company)}' "
-        f"data-title='{escape(job.title)}' data-apply='{escape(apply)}'>"
+        f"data-title='{escape(job.title)}' data-apply='{escape(apply)}' "
+        f"data-fresh='{int(fresh)}'>"
         f"<td><span class='pill {row.group}'>{escape(row.label)}</span></td>"
         f"<td>{escape(job.company)}</td>"
-        f"<td>{escape(job.title)}{warning}"
+        f"<td>{escape(job.title)}{listed}{warning}"
         "<div><button type='button' class='toggle' aria-expanded='false' "
         f"aria-controls='{detail_id}'>Details</button></div></td>"
         f"<td>{escape(_level(job))}</td>"
         f"<td>{escape(job.location_raw or '')}</td>"
-        f"<td>{_posted_html(job.posted_at)}</td>"
+        f"<td>{_posted_html(job.posted_at, fresh)}</td>"
         f"<td>{_match_html(job.fit_score, fit_threshold)}</td>"
         f"<td>{escape(activity)} {escape(_format_date(when))}</td>"
         f"<td class='links'>{''.join(links)}{answered}{controls}{finish}</td>"
@@ -654,15 +684,20 @@ def application_link(job: Job) -> str:
     return job.url
 
 
-def _posted_html(posted_at: datetime | None) -> str:
+def _posted_html(posted_at: datetime | None, fresh: bool = False) -> str:
     if posted_at is None:
         return "<span class='muted'>unknown</span>"
     days = max(0, (datetime.now(UTC) - _aware(posted_at)).days)
     age = "today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+    badge = "<span class='pill fresh'>Fresh</span>" if fresh else ""
     return (
-        f"<span class='posted'>{escape(_format_date(posted_at))}</span>"
+        f"<span class='posted'>{escape(_format_date(posted_at))}</span>{badge}"
         f"<div class='muted'>{age}</div>"
     )
+
+
+def _is_fresh(posted_at: datetime | None, since: datetime) -> bool:
+    return posted_at is not None and _aware(posted_at) >= since
 
 
 def _match_html(score: int | None, threshold: int) -> str:

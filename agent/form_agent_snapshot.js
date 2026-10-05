@@ -2,9 +2,11 @@
 // Called with [attribute, limit]; see agent/form_agent.py.
 ([attribute, limit]) => {
   const visible = (el) => {
+    // File inputs are often hidden behind a styled "Browse" button but still accept files.
+    if (el.type === 'file') return true;
     const style = window.getComputedStyle(el);
     if (style.visibility === 'hidden' || style.display === 'none') return false;
-    return el.getClientRects().length > 0 || el.type === 'file';
+    return el.getClientRects().length > 0;
   };
   const text = (el) => (el ? (el.innerText || el.textContent || '') : '').replace(/\s+/g, ' ').trim();
   const labelOf = (el) => {
@@ -18,6 +20,18 @@
       const field = el.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id]');
       const legend = field && field.querySelector('legend, label, [id$=label], h3, h4');
       if (legend && legend !== el) parts.push(text(legend));
+    }
+    if (!parts.join('').trim() && el.type === 'file') {
+      // An unlabelled upload: name it by the nearest text around it ("Resume", "Browse").
+      let around = el.parentElement;
+      while (around && !text(around) && around !== document.body) around = around.parentElement;
+      let field = around;
+      for (let i = 0; i < 4 && field && field.parentElement; i++) {
+        const label = field.parentElement.querySelector('label, legend, [class*=label]');
+        if (label && text(label)) { parts.push(text(label)); break; }
+        field = field.parentElement;
+      }
+      if (!parts.length && around) parts.push(text(around).slice(0, 120));
     }
     if (el.placeholder) parts.push('placeholder: ' + el.placeholder);
     return parts.filter(Boolean).join(' | ').slice(0, 300);

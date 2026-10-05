@@ -260,3 +260,63 @@ def test_run_form_agent_reports_like_the_other_fillers(
     assert "attach it yourself" in result.field_notes["Resume"]
     assert result.status == "dry_run_ready"
     assert Path(result.screenshot_path).is_file()
+
+
+ZOHO_LIKE = """<!doctype html><html><body>
+<div id="cookie" style="position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.3)">
+  <button type="button" onclick="document.getElementById('cookie').remove()">Accept all</button>
+</div>
+<div class="field"><label>Resume</label>
+  <span class="browse">Browse<input type="file" style="display:none" id="resume"></span></div>
+<div class="field"><label>Tools you use</label>
+  <label><input type="checkbox" id="openai" style="opacity:0;position:absolute">
+    <span>OpenAI API</span></label></div>
+</body></html>"""
+
+
+def test_hidden_uploads_cookie_overlays_and_styled_checkboxes(page, tmp_path: Path) -> None:
+    page.set_content(ZOHO_LIKE)
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    agent = FormAgent(
+        page, profile={}, resume_path=resume, answerer=lambda *_: None, client=None, model="m"
+    )
+    controls = agent._tool_observe_page()["controls"]
+    ids = _ids({"controls": controls})
+    upload = next(item for item in controls if item.get("type") == "file")
+    assert upload["label"] == "Resume"
+
+    blocked = agent._tool_click(ids["OpenAI API"], "Tools you use")
+    assert "covers this control" in blocked["error"] and "cookie" in blocked["error"]
+
+    agent._tool_click(ids["Accept all"])
+    controls = agent._tool_observe_page()["controls"]
+    ids = _ids({"controls": controls})
+    upload = next(item for item in controls if item.get("type") == "file")
+    assert agent._tool_click(ids["OpenAI API"], "Tools you use")["checked"] is True
+    assert agent.run.answers["Tools you use"] == "OpenAI API"
+    agent._tool_upload_resume(upload["id"])
+    assert page.evaluate("document.getElementById('resume').files[0].name") == "resume.pdf"
+
+
+def test_finish_notes_attach_to_the_question_already_recorded(page, tmp_path: Path) -> None:
+    agent = FormAgent(
+        page, profile={}, resume_path=tmp_path / "r.pdf", answerer=None, client=None, model="m"
+    )
+    agent.run.answers["Expected Salary"] = None
+    agent.run.answers["Experience in Years"] = None
+
+    agent._tool_finish(
+        "Done.",
+        [
+            {"field": "Expected Salary (required)", "reason": "Yours to decide."},
+            {"field": "Typing Speed (WPM)", "reason": "Not in your profile."},
+        ],
+    )
+
+    assert set(agent.run.answers) == {
+        "Expected Salary",
+        "Experience in Years",
+        "Typing Speed (WPM)",
+    }
+    assert agent.run.notes["Expected Salary"] == "Yours to decide."

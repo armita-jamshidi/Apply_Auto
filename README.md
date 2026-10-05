@@ -2,7 +2,7 @@
 
 A privacy-conscious job discovery and application assistant, built in reviewable phases.
 
-**Current status: Phases 1–9 are implemented.** The agent finds AI and agent engineering roles that are remote in the US or in North Carolina, from company boards (Greenhouse, Lever, Ashby, SmartRecruiters) and remote job sources (We Work Remotely, Hacker News "Who is hiring?", Himalayas). It scores each job's fit against a private profile with Anthropic, links each job to the company's own application page, prepares grounded answers to every application question, and shows everything on a local dashboard where jobs are marked applied or removed. Unfamiliar forms (Workday, company career pages, custom widgets) are filled by a model-driven form agent, and written answers can draw on a private library of essays and project write-ups through an agent that decides what to look up. Submitting stays with the candidate: forms are filled in dry runs, in a browser left open for the candidate (hand-off), or copied from the review page (assist). Automatic submission happens only with an explicit `--live` flag and only when every safeguard passes.
+**Current status: Phases 1–11 are implemented.** The agent finds AI and agent engineering roles that are remote in the US or in North Carolina, from company boards (Greenhouse, Lever, Ashby, SmartRecruiters) and remote job sources (We Work Remotely, Hacker News "Who is hiring?", Himalayas), newest postings first so you can apply early. It scores each job's fit against a private profile with Anthropic, finds jobs from third-party sites on the company's own careers site with a careers agent (showing the company's exact title and linking to its application form), prepares grounded answers to every application question, and shows everything on a local dashboard where jobs are marked applied or removed. Unfamiliar forms (Workday, company career pages, custom widgets) are filled by a model-driven form agent, and written answers can draw on a private library of essays and project write-ups through an agent that decides what to look up. Submitting stays with the candidate: forms are filled in dry runs, in a browser left open for the candidate (hand-off), or copied from the review page (assist). Automatic submission happens only with an explicit `--live` flag and only when every safeguard passes.
 
 ## Architecture
 
@@ -14,8 +14,9 @@ flowchart LR
     F -->|AI or agent role, NC or US remote| D[(Jobs database)]
     F -->|Unclear location| Q[Check location]
     F -->|Out of scope| X[Discard]
-    D --> S[Fit scoring]
-    S --> P[Answer preparation: dry-run form fill]
+    D --> K[Careers agent: company's own page and exact title]
+    K --> S[Fit scoring]
+    S --> P[Answer preparation: board filler or form agent, freshest first]
     P --> B[Dashboard: match, answers, Apply link]
     B -->|Finish| H[Hand-off: candidate reviews and submits]
     B -->|Mark applied / Remove| D
@@ -109,7 +110,7 @@ The tests use SQLite (in memory or in temporary files), mocked HTTP responses, a
 job-run
 ```
 
-runs discovery, fit-scores every job that has no score yet (`--score-limit`, default 150; one Anthropic call each), and prepares answers for the best new matches (`--prepare N`, default 5) by running the ordinary headless dry run on each. Postings older than `discovery.max_posting_age_days` (default 60) are skipped; the dashboard's **Posted** column shows each posting's date and age, or "unknown" when the source gives none. A role already stored (same URL, or same title at the same company) is never added twice. Jobs from Himalayas, We Work Remotely, and Hacker News are matched to the company's own careers system (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee, or BambooHR) by title, so **Apply** opens the company's job page; matches on the first four can also be filled. Jobs whose fit check finds unmet requirements or a low score move to Skipped. Each company keeps at most `discovery.max_jobs_per_company` open jobs (default 2): prepared jobs first, then the highest fit scores; the rest are removed. Applied jobs are never removed or counted. Prepared jobs move to **Ready for you**, and the dashboard opens. `--skip-discovery` reuses jobs already found. Nothing is submitted: finish each prepared application with its hand-off or assist command.
+runs discovery, fit-scores every job that has no score yet (`--score-limit`, default 150; one Anthropic call each), and prepares answers for the best new matches (`--prepare N`, default 5): jobs on the four supported boards with the ordinary headless dry run, and jobs whose company application form is known (Workday, Zoho Recruit, iCIMS, a careers site) with the form agent, headless. Postings at most `discovery.fresh_posting_days` old (default 7) are prepared first, then the best fit scores. Postings older than `discovery.max_posting_age_days` (default 60) are skipped; the dashboard's **Posted** column shows each posting's date and age, or "unknown" when the source gives none. A role already stored (same URL, or same title at the same company) is never added twice. Jobs from Himalayas, We Work Remotely, and Hacker News are matched to the company's own careers system (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee, or BambooHR) by title, so **Apply** opens the company's job page; matches on the first four can also be filled. Jobs from third-party sites are then looked up by the careers agent (see **Finding Jobs on the Company's Own Site**), at most `discovery.careers_agent_limit` per run (default 5, newest postings first; each lookup makes several model calls; `--no-company-pages` skips it). Jobs whose fit check finds unmet requirements or a low score move to Skipped. Each company keeps at most `discovery.max_jobs_per_company` open jobs (default 2): prepared jobs first, then the highest fit scores; the rest are removed. Applied jobs are never removed or counted. Prepared jobs move to **Ready for you**, and the dashboard opens. `--skip-discovery` reuses jobs already found. Nothing is submitted: finish each prepared application with its hand-off or assist command.
 
 Open-ended questions (for example "summarize your top two technical accomplishments", "describe a project you're proud of", or any "why" question) get a written draft built only from your profile, resume, and the job description, with every sentence tied to an exact source quote. Drafts are left blank in the form and shown on the dashboard and review page with a Copy button, so you can check them before pasting.
 
@@ -194,6 +195,23 @@ Any existing live-attempt record for a job blocks another attempt, even if the b
 job-apply --platform greenhouse --job-url "https://boards.greenhouse.io/example/jobs/123" --live
 ```
 
+## Finding Jobs on the Company's Own Site
+
+Jobs found on Himalayas, We Work Remotely, or Hacker News carry the board's wording of the title and link to the board. The careers agent looks each one up on the hiring company's own site and uses the company's version:
+
+```powershell
+job-company-pages              # the next jobs not yet checked (careers_agent_limit)
+job-company-pages --job-id 134 --recheck
+```
+
+It runs a Claude tool loop (`careers_agent_model`, default `claude-sonnet-5-5`) with web search to find the company's careers page, a page reader, and a reader for the company's public job boards. It follows the listing to the role's own page and reports the page and the title. Code checks the report before anything changes:
+
+- the page must be one a tool actually returned (an unopened search result is opened first);
+- the title must appear whole on that page, as the link text that led to it, or as the board listing's title, so the dashboard shows the company's exact wording (a shorter title inside a longer one, such as "AI Engineer" in "Applied AI Engineer", does not count);
+- job boards and aggregators are rejected, as is a title that adds a level (Senior, Staff, Lead) the listed role does not have.
+
+When the posting's Apply button leads to an application system (Zoho Recruit, iCIMS, Workday, JazzHR, and others), **Apply** opens that form, and `job-run` prepares it with the form agent. The dashboard shows the company's title with "Listed elsewhere as …" under it, and the posting date from the company page or board fills in when the third-party site gave none. Pages are read with plain requests that follow robots.txt, with a headless browser only for pages drawn by JavaScript; a bot check or block ends the visit to that site, and nothing is submitted or logged into. Each job is checked once.
+
 ## Unfamiliar Forms: the Form Agent
 
 The fillers above use fixed selectors for Greenhouse, Lever, Ashby, and SmartRecruiters. Every other form (Workday, company career pages, forms with custom widgets) is filled by a model-driven agent that reads the page and decides what to do:
@@ -202,7 +220,7 @@ The fillers above use fixed selectors for Greenhouse, Lever, Ashby, and SmartRec
 job-agent-fill --job-url "https://company.wd1.myworkdayjobs.com/en-US/careers/job/..."
 ```
 
-It opens the page in the hand-off browser and works through the form with a small set of tools: read the page as a numbered list of controls with the labels a person sees, take a screenshot when a widget is unclear, fill a field, choose a dropdown option, click (radio buttons, checkboxes, custom dropdowns, Next/Continue), type into search-as-you-type fields and pick from the options that appear, upload the resume, and ask the answer engine for a grounded answer. Contact details, links, work authorization, and saved answers come from the private profile; everything else goes through the same grounded answer engine as the other fillers, so nothing is invented. The model is `form_agent_model` in `config/settings.yaml` (default `claude-opus-5-5`), with the API's refusal fallback enabled.
+It opens the page in the hand-off browser and works through the form with a small set of tools: read the page as a numbered list of controls with the labels a person sees, take a screenshot when a widget is unclear, fill a field, choose a dropdown option, click (radio buttons, checkboxes, custom dropdowns, Next/Continue), type into search-as-you-type fields and pick from the options that appear, upload the resume, and ask the answer engine for a grounded answer. Contact details, links, work authorization, and saved answers come from the private profile; everything else goes through the same grounded answer engine as the other fillers, so nothing is invented. The model is `form_agent_model` in `config/settings.yaml` (default `claude-opus-5-5`), with the API's refusal fallback enabled. Upload fields hidden behind a styled Browse button are still found, a control covered by a cookie banner reports what covers it so the agent closes the banner first, styled checkboxes are confirmed checked, and questions it leaves for you are recorded once under the form's own wording.
 
 Safety is enforced in code, not only in the prompt:
 
@@ -222,7 +240,7 @@ Put essays, project write-ups, and other source material in the private folder `
 job-dashboard
 ```
 
-serves the dashboard at `http://127.0.0.1:8765/` and opens it: every discovered job with its company, role, level, location, posting date and age, match score, last activity, and status, filterable and searchable. Each row's **Apply** link opens the company's own job page when one is known (the company's careers site for company-hosted boards, or the application form), with the original listing as a second **Posting** link. Summary tiles count jobs found, fit scored, strong matches, answers ready, and applied. **Details** on any row shows why it matches, any unmet requirements, and every prepared answer, draft, and blank field with the reason it was left blank, each answer with a Copy button.
+serves the dashboard at `http://127.0.0.1:8765/` and opens it: every discovered job with its company, role, level, location, posting date and age, match score, last activity, and status, filterable and searchable. Each row's **Apply** link opens the company's own job page when one is known (the company's careers site for company-hosted boards, or the application form), with the original listing as a second **Posting** link. Summary tiles count jobs found, fit scored, strong matches, postings from the last `fresh_posting_days` days, answers ready, and applied. Within each group, fresh postings come first and carry a **Fresh** badge, and the **Fresh** filter shows only them, so you can apply early. **Details** on any row shows why it matches, any unmet requirements, and every prepared answer, draft, and blank field with the reason it was left blank, each answer with a Copy button.
 
 - **Ready for you:** the form was filled; open it with the command under **Finish**, answer what is left, and submit it yourself.
 - **New:** found by discovery and not attempted yet, highest fit first. Unmet requirements are flagged in red.
@@ -242,7 +260,7 @@ Before filling a form, `job-apply` checks the stored job against your profile. J
 
 ## Configuration
 
-`config/settings.yaml` controls the role scope (`discovery.title_keywords`, `title_role_keywords`, exclusions, `experience_levels`, `max_years_experience`), `max_posting_age_days`, `max_jobs_per_company`, `remote_boards`, location behavior, HTTP retry backoff, the fit-score threshold, the Anthropic model, and the live-application caps (`safeguards.daily_application_cap` and `safeguards.company_monthly_application_cap`, both counted in America/New_York time). Set `location.include_hybrid_nc` to `false` to exclude hybrid roles even when located in North Carolina. Put `ANTHROPIC_API_KEY` in the ignored local `.env`; never put a real key in `.env.example` or source control. The private `profile/profile.yaml` and resume PDF are intentionally absent; copy the fictional example only as a schema reference and keep real personal material local.
+`config/settings.yaml` controls the role scope (`discovery.title_keywords`, `title_role_keywords`, exclusions, `experience_levels`, `max_years_experience`), `max_posting_age_days`, `fresh_posting_days`, `careers_agent_limit`, `max_jobs_per_company`, `remote_boards`, the careers agent and form agent models, location behavior, HTTP retry backoff, the fit-score threshold, the Anthropic model, and the live-application caps (`safeguards.daily_application_cap` and `safeguards.company_monthly_application_cap`, both counted in America/New_York time). Set `location.include_hybrid_nc` to `false` to exclude hybrid roles even when located in North Carolina. Put `ANTHROPIC_API_KEY` in the ignored local `.env`; never put a real key in `.env.example` or source control. The private `profile/profile.yaml` and resume PDF are intentionally absent; copy the fictional example only as a schema reference and keep real personal material local.
 
 ## Results and Lessons Learned
 
@@ -250,6 +268,9 @@ Before filling a form, `job-apply` checks the stored job against your profile. J
 - **Loose label matching needs type checks.** Matching a "LinkedIn" field by label also matched a "Social media (LinkedIn, X)" radio option; typing into it raised and aborted the whole form. Profile values now skip non-text inputs, and one failing control is noted for review instead of stopping the form.
 - **Status actions must be idempotent.** Marking a job applied twice, or Undo then Mark applied, once stacked duplicate submission records.
 - **Store the link the tool can use, show the link the person wants.** Company-hosted Greenhouse boards publish their own careers URL; the filler needs the Greenhouse page, while the dashboard should open the company's page. Both are now kept.
+- **Check the agent's claims in code, and compare whole titles.** The careers agent once reported a role from a search result it never opened, and a looser check would have accepted "AI Engineer" because it appears inside "Applied AI Engineer". Opening the reported page and requiring the title as a whole line or link text fixed both.
+- **A form the agent cannot see, it cannot fill.** Zoho Recruit hides its file inputs behind a Browse label and covers the page with a cookie banner; the page snapshot dropped the inputs and the click error never said what was in the way. Listing hidden file inputs and naming the covering element let the agent upload and close the banner.
+- **Worker threads must not share a database session.** Fit scoring read job fields inside its threads; after a commit expired them, a thread reloaded them on another thread's SQLite connection, failing one job in three. Reading the fields before starting the threads fixed it.
 - **Respect each site's rules.** Sources that block automated access (SimplyHired, Himalayas job pages) or disallow their API in robots.txt (Remotive) are not used, and CAPTCHAs are never bypassed.
 
 ## Roadmap
@@ -263,6 +284,8 @@ Before filling a form, `job-apply` checks the stored job against your profile. J
 7. Targeted discovery: AI and agent engineering roles only, North Carolina or US remote, no internships, co-ops, or new-grad roles, at most 2 years required, at most 2 jobs per company, postings under 60 days old, remote job sources, and links to each company's own application page. (Done.)
 8. A model-driven form agent for unfamiliar forms (Workday, company career pages, custom widgets) that reads the page and decides what to fill, never submitting. (Done.)
 9. A source library beyond one resume (essays, project write-ups) with an agent that decides what to look up for each answer, keeping every claim cited. (Done.)
-10. LinkedIn alert email parsing to locate the employer's own posting.
-11. Grounded resume tailoring with claim traceability checks.
-12. Daily scheduling.
+10. A careers agent that finds third-party jobs on the company's own site, takes the company's exact title, and links to the real application form, which the form agent prepares. (Done.)
+11. Early applying: fresh postings listed and prepared first, and a Fresh filter on the dashboard. (Done.)
+12. LinkedIn alert email parsing to locate the employer's own posting.
+13. Grounded resume tailoring with claim traceability checks.
+14. Daily scheduling.

@@ -1,5 +1,6 @@
 """Tests for batch fit scoring, choosing jobs to prepare, and answers on the dashboard."""
 
+from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
@@ -110,6 +111,51 @@ def test_prepare_runs_a_dry_run_per_job_and_never_submits(session: Session) -> N
     assert not {"--live", "--hand-off", "--assist"} & set(commands[0])
 
 
+def test_company_forms_off_the_supported_boards_are_prepared_by_the_form_agent(
+    session: Session,
+) -> None:
+    settings = load_settings()
+    zoho = "https://acme.zohorecruit.com/jobs/Careers/1/AI-Engineer"
+    company_form = add_job(
+        session,
+        "https://himalayas.app/companies/acme/jobs/ai-engineer",
+        fit_score=90,
+        platform="himalayas",
+        apply_url=zoho,
+    )
+    add_job(
+        session,
+        "https://himalayas.app/companies/other/jobs/ai-engineer",
+        fit_score=95,
+        platform="himalayas",
+        apply_url="https://himalayas.app/companies/other/jobs/ai-engineer",
+    )
+
+    assert pipeline.jobs_to_prepare(session, settings, limit=5) == [company_form]
+    command = pipeline.prepare_command(company_form)
+    assert command[2:] == [
+        "agent.form_agent",
+        "--headless",
+        "--job-url",
+        zoho,
+        "--lookup-url",
+        company_form.url,
+    ]
+
+
+def test_fresh_postings_are_prepared_first(session: Session) -> None:
+    settings = load_settings()
+    now = datetime.now(UTC)
+    add_job(
+        session, "https://jobs.lever.co/a/old", fit_score=99, posted_at=now - timedelta(days=40)
+    )
+    fresh = add_job(
+        session, "https://jobs.lever.co/a/fresh", fit_score=80, posted_at=now - timedelta(days=1)
+    )
+
+    assert pipeline.jobs_to_prepare(session, settings, limit=1) == [fresh]
+
+
 def test_dashboard_shows_match_reasons_and_every_answer(session: Session, tmp_path: Path) -> None:
     listing = JobListing(
         source="lever",
@@ -156,8 +202,6 @@ def test_dashboard_shows_match_reasons_and_every_answer(session: Session, tmp_pa
     assert "Draft, not filled" in html
     assert "No saved answer." in html
     assert "1 of 3 answered" in html
-
-
 
 
 def test_removed_jobs_are_hidden_and_server_saves_status_changes(tmp_path: Path) -> None:
@@ -230,7 +274,7 @@ def test_rows_offer_mark_applied_and_undo_back_to_where_they_were(
     assert f"data-job='{manual.id}' data-status='new'" in html
     assert "Mark applied" in html and "Applied ✓ · Undo" in html
     assert f"data-job='{ready.id}' data-restore='manual_review'" in html
-    assert "id=\"readonly\"" in html
+    assert 'id="readonly"' in html
 
 
 @pytest.mark.parametrize(
@@ -276,11 +320,17 @@ def test_cleanup_removes_out_of_scope_jobs_but_never_applied_ones(session: Sessi
 
 def test_cleanup_removes_jobs_outside_nc_or_remote(session: Session) -> None:
     onsite = add_job(
-        session, "https://jobs.lever.co/a/ca", status="queued",
-        location_raw="Mountain View, California, United States", location_category="other",
+        session,
+        "https://jobs.lever.co/a/ca",
+        status="queued",
+        location_raw="Mountain View, California, United States",
+        location_category="other",
     )
     unclear = add_job(
-        session, "https://jobs.lever.co/a/us", status="queued", location_raw="United States",
+        session,
+        "https://jobs.lever.co/a/us",
+        status="queued",
+        location_raw="United States",
         location_category="other",
     )
     raleigh = add_job(session, "https://jobs.lever.co/a/nc", location_raw="Raleigh, NC")

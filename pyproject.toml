@@ -28,6 +28,7 @@ job-apply = "agent.applier.cli:main"
 job-dashboard = "agent.dashboard:main"
 job-run = "agent.pipeline:main"
 job-agent-fill = "agent.form_agent:main"
+job-company-pages = "agent.careers_agent:main"
 
 [project.optional-dependencies]
 dev = [

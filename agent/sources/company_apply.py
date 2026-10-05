@@ -108,7 +108,10 @@ _NOT_COMPANY_HOSTS = (
     "weworkremotely.com", "ycombinator.com", "linkedin.com", "github.com", "twitter.com",
     "x.com", "youtube.com", "medium.com", "google.com", "imgix.net", "amazonaws.com",
     "wellfound.com", "angel.co", "glassdoor.com", "indeed.com", "facebook.com",
-    "instagram.com", "tiktok.com", "bit.ly",
+    "instagram.com", "tiktok.com", "bit.ly", "himalayas.app", "simplyhired.com",
+    "ziprecruiter.com", "builtin.com", "dice.com", "monster.com", "careerbuilder.com",
+    "remoteok.com", "remotive.com", "workingnomads.com", "jobicy.com", "otta.com",
+    "welcometothejungle.com",
 )
 _NAME_SUFFIXES = re.compile(
     r"\b(?:inc|llc|ltd|corp|corporation|co|company|labs?|technologies|technology|hq)\b\.?",
@@ -172,7 +175,7 @@ def find_company_application(
     """Find the company's own application for a job, or None when there is no better link."""
     links = list(links)
     for link in links:
-        job_url = _board_job_url(link)
+        job_url = board_job_url(link)
         if job_url is not None:
             return CompanyApplication(job_url[1], job_url[0])
 
@@ -202,7 +205,7 @@ def resolve_listing(listing: JobListing, cache: BoardCache) -> JobListing:
     A job found on a supported board takes that board's URL and platform (keeping its source),
     so it can be filled; otherwise apply_url records the company's careers or apply page.
     """
-    if listing.platform in FILLABLE_PLATFORMS:
+    if listing.platform in FILLABLE_PLATFORMS or listing.apply_url is not None:
         return listing
     found = find_company_application(
         listing.company, listing.title, [*listing.links, *links_in(listing.description)], cache
@@ -220,7 +223,7 @@ def resolve_listing(listing: JobListing, cache: BoardCache) -> JobListing:
     return replace(listing, apply_url=found.url)
 
 
-def _board_job_url(link: str) -> tuple[str, str] | None:
+def board_job_url(link: str) -> tuple[str, str] | None:
     """(platform, job URL) when a link points at one job on a supported board."""
     board = board_from_url(link)
     if board is None:

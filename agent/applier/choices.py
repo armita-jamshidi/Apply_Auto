@@ -96,8 +96,8 @@ def desired_choices(question: str, profile: Mapping[str, Any]) -> Wanted | None:
     policy = _policy_answer(text)
     if policy is not None:
         return [YES if policy else NO]
-    if re.search(r"(?:meet|satisfy)", text) and re.search(
-        r"(?:qualifications?|requirements?|criteria)", text
+    if re.search(r"\b(?:meet|satisfy)\b", text) and re.search(
+        r"\b(?:qualifications?|requirements?|criteria)\b", text
     ):
         personal = _section(profile, "personal")
         return [YES] if personal.get("meets_job_requirements") is True else None

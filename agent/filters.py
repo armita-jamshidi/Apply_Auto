@@ -2,7 +2,7 @@
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from agent.seniority import classify_experience
@@ -251,14 +251,24 @@ def persist_job_if_new(
 
 
 def same_role(session: Session, company: str, title: str) -> Job | None:
-    """A stored job with the same title at the same company, ignoring case and punctuation."""
+    """A stored job with the same title at the same company, ignoring case and punctuation.
+
+    The title may be the stored one or, for a job retitled from the company's own site, the
+    title the third-party site used.
+    """
     wanted_company = company_key(company)
     wanted_title = _words(title)
     # Only the first character narrows the query; escape it in case it is a LIKE wildcard.
     first = title.strip()[:1].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    candidates = select(Job).where(Job.title.ilike(first + "%", escape="\\"))
+    candidates = select(Job).where(
+        or_(
+            Job.title.ilike(first + "%", escape="\\"),
+            Job.listed_title.ilike(first + "%", escape="\\"),
+        )
+    )
     for job in session.scalars(candidates):
-        if _words(job.title) == wanted_title and company_key(job.company) == wanted_company:
+        titles = {_words(job.title), _words(job.listed_title or "")}
+        if wanted_title in titles and company_key(job.company) == wanted_company:
             return job
     return None
 

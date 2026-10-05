@@ -33,6 +33,10 @@ class Job(Base):
     location_raw: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     location_category: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The title on the third-party site, when the company's own site words it differently.
+    listed_title: Mapped[str | None] = mapped_column(String(300))
+    # When the careers agent looked for this job on the company's own site.
+    company_page_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When the employer published the posting, if the source says.
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fit_score: Mapped[int | None] = mapped_column(Integer)

@@ -4,6 +4,8 @@ fit_score_threshold: 70
 anthropic_model: claude-sonnet-5-5
 # Model for the form agent that fills unfamiliar forms (Workday, career pages, custom widgets).
 form_agent_model: claude-opus-5-5
+# Model for the careers agent that finds third-party jobs on the company's own site.
+careers_agent_model: claude-sonnet-5-5
 location:
   include_hybrid_nc: true
 network:
@@ -23,6 +25,12 @@ discovery:
   max_jobs_per_company: 2
   # Skip postings published more than this many days ago (jobs with no date are kept).
   max_posting_age_days: 60
+  # Postings at most this many days old count as fresh: they are listed, looked up, and
+  # prepared first so you can apply early, and the dashboard can show only them.
+  fresh_posting_days: 7
+  # Each run, look up at most this many jobs from third-party sites on the companies' own
+  # careers pages (newest postings first). Each lookup makes several model calls.
+  careers_agent_limit: 5
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
   # Never keep internships, co-ops, or new-grad roles (matched in titles), or postings that
@@ -45,6 +53,10 @@ discovery:
     - recent graduate
     - university grad
     - university graduate
+    - college grad
+    - college grads
+    - college graduate
+    - college graduates
   exclude_description_phrases:
     - new grad
     - new grads

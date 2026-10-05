@@ -45,6 +45,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_MODEL = "claude-opus-5-5"
 MAX_STEPS = 80
 MAX_CONTROLS = 160
+CLICK_TIMEOUT_MS = 8000
 ID_ATTRIBUTE = "data-form-agent-id"
 # Clicking one of these would send the application; the agent never does.
 SUBMIT_TEXT = re.compile(
@@ -339,7 +340,11 @@ class FormAgent:
         try:
             result = handler(**arguments)
         except PlaywrightError as error:
-            return json.dumps({"error": str(error).splitlines()[0]}), True
+            covered = _covering_element(str(error))
+            message = str(error).splitlines()[0]
+            if covered:
+                message += f" Another element covers the control: {covered}. Close it first."
+            return json.dumps({"error": message}), True
         except (TypeError, ValueError) as error:
             return json.dumps({"error": f"Bad arguments: {error}"}), True
         if isinstance(result, list):
@@ -406,12 +411,34 @@ class FormAgent:
             }
         if ACCOUNT_TEXT.search(words):
             return {"error": "Refused: account creation is for the candidate (use ask_human)."}
-        self._locator(control_id).click()
+        locator = self._locator(control_id)
+        toggle = control.get("type") in {"checkbox", "radio"}
+        try:
+            locator.click(timeout=CLICK_TIMEOUT_MS)
+        except PlaywrightError as error:
+            covered = _covering_element(str(error))
+            if covered:
+                return {
+                    "error": f"Another element covers this control: {covered}. Close it first "
+                    "(for example accept or decline a cookie banner), then try again."
+                }
+            if not toggle:
+                raise
+            # Styled checkboxes are often transparent inputs under a custom box.
+            locator.evaluate("el => el.click()")
         self._settle()
-        if question:
+        result: dict[str, Any] = {
+            "clicked": control.get("text") or control.get("label"),
+            "url": self.page.url,
+        }
+        if toggle:
+            result["checked"] = locator.is_checked()
+        if question and (not toggle or result["checked"]):
             choice = control.get("text") or control.get("label") or ""
+            if control.get("type") == "checkbox" and self.run.answers.get(question):
+                choice = f"{self.run.answers[question]}; {choice}"
             self.run.answers[question] = str(choice)
-        return {"clicked": control.get("text") or control.get("label"), "url": self.page.url}
+        return result
 
     def _tool_type_and_list_options(self, control_id: str, text: str) -> dict[str, Any]:
         if self._control(control_id) is None:
@@ -483,6 +510,8 @@ class FormAgent:
         self.run.finished = True
         for item in left_for_candidate:
             name = str(item.get("field", "")).strip() or "Unnamed field"
+            # The model often renames a question here; keep it under the name already recorded.
+            name = _same_question(name, [*self.run.answers, *self.run.notes]) or name
             self.run.notes[name] = str(item.get("reason", "")).strip() or "Left for you."
             # Submitting is always the candidate's step, not an unanswered question.
             if not SUBMIT_TEXT.search(name):
@@ -589,6 +618,35 @@ def _candidate_facts(profile: Mapping[str, Any]) -> dict[str, Any]:
     keys = ("personal", "work_authorization", "application_answers", "education")
     facts = {key: profile[key] for key in keys if key in profile}
     return facts or {"facts": _collect_profile_facts(profile)}
+
+
+def _same_question(name: str, known: list[str]) -> str | None:
+    """The recorded question a finish note refers to, matched by shared words, if any."""
+    wanted = _question_words(name)
+    if not wanted:
+        return None
+    best, best_score = None, 0.0
+    for question in dict.fromkeys(known):
+        words = _question_words(question)
+        if not words:
+            continue
+        score = len(wanted & words) / min(len(wanted), len(words))
+        if score > best_score:
+            best, best_score = question, score
+    return best if best_score >= 0.6 else None
+
+
+def _question_words(text: str) -> set[str]:
+    ignored = {"required", "optional", "the", "a", "an", "and", "or", "of", "your", "you", "to"}
+    return {word for word in re.findall(r"[a-z0-9]+", text.casefold()) if word not in ignored}
+
+
+def _covering_element(error: str) -> str | None:
+    """What Playwright says is covering a control it could not click, if that was the cause."""
+    for line in error.splitlines():
+        if "intercepts pointer events" in line:
+            return line.strip(" -").split(" subtree intercepts")[0].split(" intercepts")[0][:200]
+    return None
 
 
 def _stale(control_id: str) -> dict[str, str]:

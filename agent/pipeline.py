@@ -10,15 +10,17 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from agent.applier.cli import PLATFORM_HOSTS
 from agent.applier.greenhouse import load_profile
 from agent.applier.review import FitSummary
+from agent.careers_agent import check_company_pages
 from agent.dashboard import DEFAULT_PORT, refresh_dashboard
 from agent.dashboard import serve as serve_dashboard
 from agent.filters import company_key, is_ambiguous_location, normalize_location
@@ -32,7 +34,12 @@ from agent.settings import (
     stale_posting_reason,
     title_in_scope,
 )
-from agent.sources.company_apply import BoardCache, find_company_application, links_in
+from agent.sources.company_apply import (
+    BoardCache,
+    _is_aggregator,
+    find_company_application,
+    links_in,
+)
 from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
 from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Job
@@ -56,9 +63,7 @@ def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     remote. Applied, prepared, and already removed jobs are left alone. Removed jobs are
     hidden, and discovery does not add them back.
     """
-    jobs = session.scalars(
-        select(Job).where(Job.status.in_(("new", "queued", "skipped")))
-    ).all()
+    jobs = session.scalars(select(Job).where(Job.status.in_(("new", "queued", "skipped")))).all()
     removed = 0
     for job in jobs:
         reason = excluded_role_reason(job.title, job.description, settings)
@@ -102,8 +107,10 @@ def resolve_application_links(session: Session, cache: BoardCache | None = None)
         application = find_company_application(
             job.company, job.title, links_in(job.description), cache
         )
-        taken = application is not None and application.platform is not None and (
-            session.scalar(select(Job.id).where(Job.url == application.url)) is not None
+        taken = (
+            application is not None
+            and application.platform is not None
+            and (session.scalar(select(Job.id).where(Job.url == application.url)) is not None)
         )
         if application is None or taken:
             # Nothing better than the posting (or that job is already listed): remember it.
@@ -189,18 +196,22 @@ def score_unscored_jobs(
         return 0
     LOGGER.info("Scoring fit for %d jobs", len(jobs))
 
-    def assess(job: Job) -> FitAssessment:
+    def assess(description: str, posting: dict[str, str]) -> FitAssessment:
         return scorer(
-            job.description,
+            description,
             profile,
             fit_score_threshold=settings.fit_score_threshold,
             model=settings.anthropic_model,
-            job_posting=posting_details(job),
+            job_posting=posting,
         )
 
     scored = 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [(job, pool.submit(assess, job)) for job in jobs]
+        # Read each job here: worker threads must not touch the session, whose commits
+        # below would otherwise make them reload expired fields on another thread.
+        futures = [
+            (job, pool.submit(assess, job.description, posting_details(job))) for job in jobs
+        ]
         for job, future in futures:
             try:
                 assessment = future.result()
@@ -228,7 +239,13 @@ def posting_details(job: Job) -> dict[str, str]:
 
 
 def jobs_to_prepare(session: Session, settings: AgentSettings, *, limit: int) -> list[Job]:
-    """Best-matching new jobs that pass the fit check and have no answers prepared yet."""
+    """New jobs that pass the fit check and have no answers prepared yet.
+
+    A job qualifies when its form can be read: one on a supported board, or one whose
+    company application page is known (Workday, Zoho Recruit, iCIMS, a careers site), which
+    the form agent reads. Fresh postings (at most fresh_posting_days old) come first so
+    you can apply early, then the best fit scores.
+    """
     jobs = session.scalars(
         select(Job)
         .options(selectinload(Job.applications))
@@ -236,7 +253,6 @@ def jobs_to_prepare(session: Session, settings: AgentSettings, *, limit: int) ->
             Job.status == "new",
             Job.location_category.in_(WANTED_LOCATIONS),
             Job.fit_score >= settings.fit_score_threshold,
-            Job.platform.in_(PLATFORM_HOSTS),
         )
         .order_by(Job.fit_score.desc(), Job.first_seen_at.desc())
     ).all()
@@ -248,13 +264,51 @@ def jobs_to_prepare(session: Session, settings: AgentSettings, *, limit: int) ->
         and job.fit_recommendation in (None, "apply")
         and excluded_role_reason(job.title, job.description, settings) is None
         and title_in_scope(job.title, settings)
-        and is_fillable(job.platform, job.url)
+        and (is_fillable(job.platform, job.url) or form_agent_target(job) is not None)
     ]
+    fresh_since = datetime.now(UTC) - timedelta(days=settings.fresh_posting_days)
+    ready.sort(key=lambda job: not is_fresh(job.posted_at, fresh_since))
     return ready[:limit]
 
 
+def is_fresh(posted_at: datetime | None, since: datetime) -> bool:
+    """Whether a posting was published on or after since (an unknown date is not fresh)."""
+    if posted_at is None:
+        return False
+    return (posted_at if posted_at.tzinfo else posted_at.replace(tzinfo=UTC)) >= since
+
+
+def form_agent_target(job: Job) -> str | None:
+    """The company application page the form agent can fill for a job, if one is known.
+
+    Job board and forum pages (Himalayas, We Work Remotely, Hacker News) are not forms.
+    """
+    url = job.apply_url or ""
+    host = (urlsplit(url).hostname or "").casefold()
+    if not url.startswith("https://") or not host or _is_aggregator(host):
+        return None
+    return url
+
+
 def prepare_command(job: Job) -> list[str]:
-    """The dry-run command that fills a job's form headlessly and records every answer."""
+    """The dry-run command that fills a job's form headlessly and records every answer.
+
+    Supported boards use their own filler; any other company form uses the form agent.
+    Neither submits.
+    """
+    if not is_fillable(job.platform, job.url):
+        target = form_agent_target(job)
+        if target is not None:
+            return [
+                sys.executable,
+                "-m",
+                "agent.form_agent",
+                "--headless",
+                "--job-url",
+                target,
+                "--lookup-url",
+                job.url,
+            ]
     return [
         sys.executable,
         "-m",
@@ -312,6 +366,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Fill answers for the N best new matches in headless dry runs (default 5; 0 skips).",
     )
+    parser.add_argument(
+        "--no-company-pages",
+        action="store_true",
+        help="Do not look up third-party jobs on the companies' own careers pages.",
+    )
     parser.add_argument("--profile", type=Path, default=PROFILE_PATH)
     parser.add_argument("--no-open", action="store_true", help="Do not open the dashboard")
     return parser
@@ -321,9 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run discovery, scoring, and preparation, then refresh and open the dashboard."""
     args = build_parser().parse_args(argv)
     if not args.skip_discovery:
-        discover(
-            ["--no-dashboard"] + (["--no-new-grad-list"] if args.no_new_grad_list else [])
-        )
+        discover(["--no-dashboard"] + (["--no-new-grad-list"] if args.no_new_grad_list else []))
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -336,6 +393,13 @@ def main(argv: list[str] | None = None) -> int:
             linked = resolve_application_links(session)
             if linked:
                 print(f"Found the company's own application for {linked} jobs.")
+            if not args.no_company_pages and settings.careers_agent_limit > 0:
+                retitled = check_company_pages(
+                    session,
+                    model=settings.careers_agent_model,
+                    limit=settings.careers_agent_limit,
+                )
+                print(f"Updated {retitled} jobs from the companies' own careers pages.")
             removed = remove_out_of_scope_jobs(session, settings)
             if removed:
                 print(f"Removed {removed} jobs outside your target roles.")

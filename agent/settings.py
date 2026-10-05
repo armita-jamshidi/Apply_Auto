@@ -30,7 +30,8 @@ class CompanyConfig:
 DEFAULT_EXCLUDED_TITLES = (
     "intern", "interns", "internship", "internships", "co-op", "co-ops", "coop", "co op",
     "new grad", "new grads", "new-grad", "new graduate", "new graduates", "recent grad",
-    "recent graduate", "university grad", "university graduate",
+    "recent graduate", "university grad", "university graduate", "college grad", "college grads",
+    "college graduate", "college graduates",
 )
 DEFAULT_EXCLUDED_DESCRIPTION_PHRASES = (
     "new grad", "new grads", "new-grad", "new graduate", "new graduates",
@@ -59,6 +60,9 @@ class AgentSettings:
     max_years_experience: int | None = None
     max_posting_age_days: int | None = None
     form_agent_model: str = "claude-opus-5-5"
+    careers_agent_model: str = "claude-sonnet-5-5"
+    careers_agent_limit: int = 5
+    fresh_posting_days: int = 7
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
 
@@ -117,6 +121,9 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         title_role_keywords=_keywords(discovery.get("title_role_keywords"), ()),
         remote_boards=_keywords(discovery.get("remote_boards"), ()),
         form_agent_model=str(raw.get("form_agent_model") or "claude-opus-5-5"),
+        careers_agent_model=str(raw.get("careers_agent_model") or anthropic_model),
+        careers_agent_limit=int(discovery.get("careers_agent_limit", 5)),
+        fresh_posting_days=int(discovery.get("fresh_posting_days", 7)),
         max_posting_age_days=(
             int(discovery["max_posting_age_days"])
             if discovery.get("max_posting_age_days")
