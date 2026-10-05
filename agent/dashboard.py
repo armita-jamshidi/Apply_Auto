@@ -733,6 +733,35 @@ def fill_command(job: Job) -> list[str] | None:
     return command + (["--lookup-url", job.url] if apply != job.url else [])
 
 
+def api_problem() -> str | None:
+    """Why the agent cannot reach the Anthropic API right now, or None when it can.
+
+    One tiny request (a few tokens on the smallest model) before the agent opens a browser.
+    """
+    import anthropic
+
+    from agent.answers import _create_client
+
+    try:
+        _create_client().messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "ok"}],
+        )
+    except anthropic.AuthenticationError:
+        return "The Anthropic API key in .env is missing or invalid, so the agent cannot run."
+    except anthropic.APIStatusError as error:
+        if "credit balance" in str(error).casefold():
+            return (
+                "Your Anthropic API credits have run out, so the agent cannot fill forms. "
+                "Add credits at console.anthropic.com (Plans & Billing), then try again."
+            )
+        return f"The Anthropic API is not available right now: {error.message}"
+    except (anthropic.APIError, OSError) as error:
+        return f"Could not reach the Anthropic API: {error}"
+    return None
+
+
 def launch_in_new_window(command: list[str]) -> None:
     """Start a command in its own console window, so it can ask you to press Enter."""
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
@@ -924,10 +953,12 @@ def make_handler(
     port: int,
     answer_question: Callable[[Job, str], dict[str, Any]] | None = None,
     launch: Callable[[list[str]], None] | None = None,
+    check_api: Callable[[], str | None] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Request handler that renders the dashboard and saves status changes."""
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     launch = launch or launch_in_new_window
+    check_api = check_api or api_problem
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
@@ -996,6 +1027,11 @@ def make_handler(
                     title, company = job.title, job.company
             if command is None:
                 self._json(400, {"error": "No application form is known for this job yet."})
+                return
+            problem = check_api()
+            if problem is not None:
+                # Without the API the agent would open a browser and fill nothing.
+                self._json(503, {"error": problem})
                 return
             try:
                 launch(command)

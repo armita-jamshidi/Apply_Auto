@@ -175,7 +175,10 @@ def test_fill_with_agent_starts_the_agent_on_the_company_form(tmp_path: Path, mo
     started: list[list[str]] = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.make_handler(factory, 0))
     port = server.server_address[1]
-    server.RequestHandlerClass = dashboard.make_handler(factory, port, launch=started.append)
+    problems: list[str | None] = [None]
+    server.RequestHandlerClass = dashboard.make_handler(
+        factory, port, launch=started.append, check_api=lambda: problems[0]
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         with sync_playwright() as playwright:
@@ -190,6 +193,13 @@ def test_fill_with_agent_starts_the_agent_on_the_company_form(tmp_path: Path, mo
             assert page.is_visible("#panel-fill")
             page.click("tr[data-title='ML Engineer'] button.panel-open")
             assert not page.is_visible("#panel-fill")
+            # Without API credits nothing is opened, and the dashboard says why.
+            problems[0] = "Your Anthropic API credits have run out."
+            page.click("#panel-close")
+            page.click("tr[data-title='AI Solutions Engineer'] button.fill")
+            page.wait_for_function(
+                "document.getElementById('toast').textContent.includes('credits')"
+            )
             browser.close()
     finally:
         server.shutdown()

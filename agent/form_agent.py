@@ -764,7 +764,13 @@ def main(argv: list[str] | None = None) -> int:
             if result.error and not any(value is not None for value in result.answers.values()):
                 # Nothing was read or answered (for example the API had no credits): keep the
                 # job's earlier attempt on the dashboard instead of an empty one.
-                print(f"\nThe agent could not start: {result.error}\nNothing was recorded.")
+                reason = result.error
+                if "credit balance" in reason.casefold():
+                    reason = (
+                        "your Anthropic API credits have run out. Add credits at "
+                        "console.anthropic.com (Plans & Billing), then try again."
+                    )
+                print(f"\nThe agent could not start: {reason}\nNothing was filled or recorded.")
                 if not args.headless:
                     _pause("Press Enter to close this window... ")
                 return 1
