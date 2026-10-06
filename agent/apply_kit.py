@@ -140,18 +140,46 @@ def latest_kit(job: Job) -> Application | None:
 
 
 def _form_answers(job: Job) -> dict[str, Any]:
-    """The questions the job's form asked, from its latest form attempt (not a kit)."""
-    attempts = [item for item in job.applications if item.mode != KIT_MODE]
-    if not attempts:
-        return {}
-    latest = max(attempts, key=lambda item: (item.started_at, item.id))
-    recorded: dict[str, Any] = dict(latest.answers or {})
-    for question, draft in (latest.suggested_answers or {}).items():
-        recorded.setdefault(question, None)
-        # A draft written before is redone, now in your voice and for this role.
-        if recorded.get(question) == draft:
-            recorded[question] = None
+    """The questions the job's form asked, from every form attempt (not kits), oldest first.
+
+    One reading can miss questions another found (a later page, an iframe), so all are kept;
+    a later attempt's value for the same question wins.
+    """
+    attempts = sorted(
+        (item for item in job.applications if item.mode != KIT_MODE),
+        key=lambda item: (item.started_at, item.id),
+    )
+    recorded: dict[str, Any] = {}
+    for attempt in attempts:
+        recorded.update(attempt.answers or {})
+        for question, draft in (attempt.suggested_answers or {}).items():
+            recorded.setdefault(question, None)
+            # A draft written before is redone, now in your voice and for this role.
+            if recorded.get(question) == draft:
+                recorded[question] = None
     return recorded
+
+
+def form_was_read(job: Job) -> bool:
+    """Whether any attempt has read the job's application form."""
+    return any(item.mode != KIT_MODE for item in job.applications)
+
+
+def questions_missing_from_kit(job: Job, kit: Application) -> list[tuple[str, str | None]]:
+    """Questions a form reading found that the kit does not answer, such as ones found after
+    the kit was made, with any value already on the form."""
+    from agent.answer_agent import NOT_QUESTIONS
+    from agent.form_agent import _matches_known
+
+    known = [*(kit.answers or {}), *(kit.suggested_answers or {})]
+    missing = []
+    for question, value in _form_answers(job).items():
+        if question in NOT_QUESTIONS or not str(question).strip():
+            continue
+        if question in known or _matches_known(question, known):
+            continue
+        missing.append((question, str(value) if value not in (None, "") else None))
+    return missing
 
 
 def ask_in_console(keyword: str) -> str | None:

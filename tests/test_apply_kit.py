@@ -1,6 +1,7 @@
 """The apply kit: a keyword-tailored resume and every question answered, all grounded."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -282,3 +283,84 @@ def test_the_kit_is_recorded_and_shown_in_the_apply_panel(
     assert f"href='/kits/{job.id}/resume'" in html
     assert "Draft: Tell us about a technical project you are proud of." in html
     assert "class='apply-link' target='_blank'" in html
+
+
+def _job_with_attempts(session: Session, *attempts: Application) -> Job:
+    job = Job(
+        source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
+        url="https://boards.greenhouse.io/acme/jobs/1", location_raw="Remote - US",
+        location_category="remote_us", description=DESCRIPTION, status="manual_review",
+    )
+    session.add(job)
+    session.flush()
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+    for index, attempt in enumerate(attempts):
+        attempt.job_id = job.id
+        attempt.started_at = start + timedelta(hours=index)
+        session.add(attempt)
+    session.flush()
+    session.refresh(job)
+    return job
+
+
+def test_questions_from_every_form_reading_are_kept(session: Session) -> None:
+    job = _job_with_attempts(
+        session,
+        Application(mode="dry_run", answers={"First name": "Sam", "Why Acme?": None}),
+        Application(mode="hand_off", answers={"First name": "Sam", "Visa status?": None}),
+    )
+
+    recorded = apply_kit._form_answers(job)
+
+    assert recorded == {"First name": "Sam", "Why Acme?": None, "Visa status?": None}
+
+
+def test_questions_found_after_the_kit_still_show_in_the_apply_panel(
+    session: Session, tmp_path: Path
+) -> None:
+    job = _job_with_attempts(
+        session,
+        Application(mode="dry_run", answers={"First name": "Sam"}),
+        Application(
+            mode=apply_kit.KIT_MODE,
+            answers={"First name": "Sam", "Why do you want to work at Acme?": None},
+            suggested_answers={"Why do you want to work at Acme?": "Draft: why Acme"},
+        ),
+        Application(
+            mode="hand_off",
+            answers={"First name": "Sam", "Preferred pronouns": "they/them",
+                     "Describe a hard bug you fixed.": None},
+        ),
+    )
+    kit = apply_kit.latest_kit(job)
+
+    assert apply_kit.questions_missing_from_kit(job, kit) == [
+        ("Preferred pronouns", "they/them"),
+        ("Describe a hard bug you fixed.", None),
+    ]
+    page = tmp_path / "dashboard.html"
+    dashboard.write_dashboard(session, page, fit_threshold=70)
+    html = page.read_text(encoding="utf-8")
+    assert "Draft: why Acme" in html
+    assert "Describe a hard bug you fixed." in html
+    assert "they/them" in html
+    assert dashboard.MISSING_FROM_KIT_NOTE in html
+    assert dashboard.FORM_NOT_READ_NOTE not in html
+
+
+def test_the_apply_panel_says_when_the_form_was_never_read(
+    session: Session, tmp_path: Path
+) -> None:
+    _job_with_attempts(
+        session,
+        Application(
+            mode=apply_kit.KIT_MODE,
+            answers={"Why do you want to work at Acme?": None},
+            suggested_answers={"Why do you want to work at Acme?": "Draft: why Acme"},
+        ),
+    )
+
+    page = tmp_path / "dashboard.html"
+    dashboard.write_dashboard(session, page, fit_threshold=70)
+
+    assert dashboard.FORM_NOT_READ_NOTE in page.read_text(encoding="utf-8")

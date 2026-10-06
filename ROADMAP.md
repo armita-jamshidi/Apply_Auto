@@ -6,7 +6,9 @@ Move an item to Done when its PR is merged.
 ## Now
 
 1. **Answer every question on the application page.** Some questions on a job's form are
-   not answered, and not all of them appear in the dashboard's Apply sidebar.
+   not answered, and not all of them appear in the dashboard's Apply sidebar. Every reading
+   of the form now feeds the kit and the sidebar; next, read questions from the board's API
+   before the form is opened.
    Spec: [specs/001-every-application-question.md](specs/001-every-application-question.md).
 
 ## Next
