@@ -5,6 +5,7 @@ import re
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from agent.fetchers.greenhouse import greenhouse_job_id
 from agent.seniority import classify_experience
 from db.models import Job
 
@@ -198,6 +199,16 @@ def normalize_location(location: str, *, include_hybrid_nc: bool = True) -> Loca
     return "nc" if is_nc else "other"
 
 
+def _same_greenhouse_job(existing: Job, listing: JobListing) -> bool:
+    """Whether a stored Greenhouse job is this listing's job, with links that differ."""
+    if existing.platform != "greenhouse" or listing.platform != "greenhouse":
+        return False
+    if (existing.url, existing.apply_url) == (listing.url, listing.apply_url):
+        return False
+    job_id = greenhouse_job_id(listing.url)
+    return job_id is not None and greenhouse_job_id(existing.url) == job_id
+
+
 def persist_job_if_new(
     session: Session,
     listing: JobListing,
@@ -217,13 +228,9 @@ def persist_job_if_new(
     if existing is not None:
         if existing.posted_at is None and listing.posted_at is not None:
             existing.posted_at = listing.posted_at
-        if (
-            existing.url != listing.url
-            and existing.platform == listing.platform
-            and listing.apply_url is not None
-            and existing.url == listing.apply_url
-        ):
-            # Stored before company-hosted Greenhouse pages were split from the board link.
+        if _same_greenhouse_job(existing, listing):
+            # Stored before company-hosted Greenhouse pages were split from the board link,
+            # or with a company page that only lists openings: use the current links.
             existing.url = listing.url
             existing.apply_url = listing.apply_url
         return False

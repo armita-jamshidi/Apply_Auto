@@ -24,8 +24,9 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
+from agent.fetchers.greenhouse import greenhouse_job_id, names_role
 from agent.settings import PROJECT_ROOT, load_settings
-from agent.sources.company_apply import _is_aggregator
+from agent.sources.company_apply import _is_aggregator, is_careers_listing
 from agent.tracking import REMOVED, mark_job
 from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Application, Job
@@ -619,7 +620,17 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         "skipped": "Skipped",
     }.get(row.group, "Filled" if row.latest else "Found")
     apply = application_link(job)
-    links = [f"<a href='{escape(apply)}' class='apply-link'>Apply</a>"]
+    if apply != job.url and is_careers_listing(apply):
+        # Only the company's general careers page is known: say so instead of "Apply".
+        links = [f"<a href='{escape(apply)}' class='apply-link'>Careers page</a>"]
+        note = (
+            "Role not found on the company's site"
+            if job.company_page_checked_at is not None
+            else "Role page not looked up yet"
+        )
+        links.append(f"<div class='muted'>{note}</div>")
+    else:
+        links = [f"<a href='{escape(apply)}' class='apply-link'>Apply</a>"]
     if apply != job.url:
         links.append(f"<a href='{escape(job.url)}'>Posting</a>")
     if _is_aggregator((urlsplit(apply).hostname or "").casefold()) and not is_fillable(
@@ -666,12 +677,14 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         f"data-restore='{escape(job.status)}' data-url='{escape(job.url)}'>Remove</button></div>"
     )
     finish = ""
+    command = None
     if row.group in {"ready", "new", "location"}:
         if is_fillable(job.platform, job.url):
             command = hand_off_command(job.platform, job.url, job.company, job.title)
-        else:
+        elif fill_command(job) is not None:
             # Unknown forms (Workday, company career pages) go to the model-driven form agent.
             command = form_agent_command(apply, job.url)
+    if command:
         finish = f"<details><summary>Finish</summary><pre>{escape(command)}</pre></details>"
     search_text = escape(
         f"{job.company} {job.title} {job.listed_title or ''} {job.location_raw}".casefold()
@@ -727,8 +740,8 @@ def fill_command(job: Job) -> list[str] | None:
         ]
     apply = application_link(job)
     host = (urlsplit(apply).hostname or "").casefold()
-    if not apply.startswith("https://") or _is_aggregator(host):
-        return None
+    if not apply.startswith("https://") or _is_aggregator(host) or is_careers_listing(apply):
+        return None  # no application form for the role is known yet
     command = [sys.executable, "-m", "agent.form_agent", "--job-url", apply]
     return command + (["--lookup-url", job.url] if apply != job.url else [])
 
@@ -789,12 +802,27 @@ def _quick_answers() -> list[tuple[str, str]]:
 
 
 def application_link(job: Job) -> str:
-    """The company's own application page when known, else the posting itself."""
-    if job.apply_url:
+    """The company's own page for the role when known, else the posting itself."""
+    if job.apply_url and not _lists_openings(job):
         return job.apply_url
     if job.platform in FILLABLE_PLATFORMS:
         return application_urls(job.platform, job.url)[1] or job.url
     return job.url
+
+
+def _lists_openings(job: Job) -> bool:
+    """Whether a Greenhouse job's company page is a list of openings, not the role.
+
+    Such pages ("https://acme.com/jobs/search?gh_jid=7") often never open the role, while
+    the Greenhouse job page always shows it.
+    """
+    job_id = greenhouse_job_id(job.url) if job.platform == "greenhouse" else None
+    host = (urlsplit(job.apply_url or "").hostname or "").casefold()
+    return (
+        job_id is not None
+        and not host.endswith("greenhouse.io")
+        and not names_role(job.apply_url or "", job_id)
+    )
 
 
 def _posted_html(posted_at: datetime | None, fresh: bool = False) -> str:

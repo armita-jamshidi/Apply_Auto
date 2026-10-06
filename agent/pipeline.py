@@ -38,6 +38,7 @@ from agent.sources.company_apply import (
     BoardCache,
     _is_aggregator,
     find_company_application,
+    is_careers_listing,
     links_in,
 )
 from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
@@ -281,11 +282,14 @@ def is_fresh(posted_at: datetime | None, since: datetime) -> bool:
 def form_agent_target(job: Job) -> str | None:
     """The company application page the form agent can fill for a job, if one is known.
 
-    Job board and forum pages (Himalayas, We Work Remotely, Hacker News) are not forms.
+    Job board and forum pages (Himalayas, We Work Remotely, Hacker News) and a company's
+    general careers page are not the role's form.
     """
     url = job.apply_url or ""
     host = (urlsplit(url).hostname or "").casefold()
     if not url.startswith("https://") or not host or _is_aggregator(host):
+        return None
+    if is_careers_listing(url):
         return None
     return url
 

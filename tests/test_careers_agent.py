@@ -449,3 +449,43 @@ def test_free_lookup_searches_the_workday_site_the_careers_page_links_to() -> No
     assert role.title == "AI Engineer - Agents (Remote)"
     assert role.url == "https://acme.wd5.myworkdayjobs.com/careers/job/Remote/AI-Engineer_R1"
     assert reader.searches == ["AI Engineer Agents"]  # no " - " for Workday to misread
+
+
+def test_a_reported_list_of_openings_is_followed_to_the_roles_own_page() -> None:
+    role_html = (
+        "<html><head><title>Applied AI Engineer – Agents | Acme</title></head><body>"
+        "<h1>Applied AI Engineer – Agents</h1><p>Build agents.</p></body></html>"
+    )
+    careers = read_html(CAREERS, "https://acme.example/careers")
+    role = read_html(role_html, "https://acme.example/careers/applied-ai-engineer")
+    model = ScriptedModel(
+        [
+            turn(call("fetch_page", {"url": "https://acme.example/careers"}, 1)),
+            turn(_report("https://acme.example/careers", "Applied AI Engineer – Agents")),
+        ]
+    )
+    agent = CareersAgent(
+        client=model,
+        model="test-model",
+        reader=FakeReader({careers.url: careers, role.url: role}),
+        boards=BoardCache({}),
+    )
+
+    outcome = agent.find(JOB)
+
+    assert outcome.role is not None
+    assert outcome.role.url == "https://acme.example/careers/applied-ai-engineer"
+
+
+def test_a_list_of_openings_is_never_accepted_as_the_role() -> None:
+    model = ScriptedModel(
+        [
+            turn(call("fetch_page", {"url": "https://acme.example/careers"}, 1)),
+            turn(_report("https://acme.example/careers", "Applied AI Engineer – Agents")),
+        ]
+    )
+
+    # The role's own page cannot be read, so only the list remains: rejected.
+    outcome = _agent(model).find(JOB)
+
+    assert outcome.role is None and "list of openings" in outcome.reason

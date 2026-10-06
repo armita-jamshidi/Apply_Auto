@@ -1,8 +1,9 @@
 """Fetcher for Greenhouse's public job board API."""
 
 import logging
+import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
@@ -68,18 +69,43 @@ def fetch_greenhouse_jobs(
 
 
 def _job_urls(board: str, raw_job: dict[str, Any]) -> tuple[str, str | None]:
-    """(Greenhouse job URL, company careers page or None).
+    """(Greenhouse job URL, the company's own page for the role or None).
 
-    Companies that host their board on their own site publish that page as absolute_url
-    (for example "https://example.com/careers?gh_jid=123"). The form filler needs the
-    Greenhouse-hosted page, so that is stored as the job's URL and the company page is kept
-    as the place to apply.
+    Companies that host their board on their own site publish that page as absolute_url.
+    The form filler needs the Greenhouse-hosted page, so that is stored as the job's URL.
+    The company page is kept as the place to apply only when it names the role
+    ("https://example.com/careers/123"); a list of openings that only carries the id in
+    its query ("https://example.com/jobs/search?gh_jid=123") often never opens the role,
+    so the Greenhouse page, which always shows it, is used instead.
     """
     absolute = str(raw_job["absolute_url"]).strip()
     host = (urlsplit(absolute).hostname or "").casefold()
     if host == "greenhouse.io" or host.endswith(".greenhouse.io"):
         return absolute, None
-    return f"https://job-boards.greenhouse.io/{board.strip()}/jobs/{raw_job['id']}", absolute
+    job_id = str(raw_job["id"])
+    board_url = f"https://job-boards.greenhouse.io/{board.strip()}/jobs/{job_id}"
+    return board_url, absolute if names_role(absolute, job_id) else None
+
+
+def names_role(url: str, job_id: str) -> bool:
+    """Whether a company-hosted Greenhouse link opens the role itself, not a list of jobs.
+
+    It does when the job id is in the path ("/careers/123") or in a fragment route
+    ("#/123"); an id only in the query string is often ignored by the page.
+    """
+    parts = urlsplit(url)
+    return any(job_id in re.findall(r"\d+", text) for text in (parts.path, parts.fragment))
+
+
+def greenhouse_job_id(url: str) -> str | None:
+    """The Greenhouse job id in a board link or a company-hosted gh_jid link."""
+    parts = urlsplit(url)
+    query = parse_qs(parts.query)
+    found = (query.get("gh_jid") or query.get("token") or [""])[0]
+    if found.isdigit():
+        return found
+    match = re.search(r"/jobs/(\d+)", parts.path)
+    return match.group(1) if match else None
 
 
 def _as_mapping(payload: object) -> dict[str, Any]:

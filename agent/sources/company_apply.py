@@ -192,11 +192,36 @@ def find_company_application(
                     job.apply_url if fillable else None,
                 )
 
-    for link in links:
-        host = (urlsplit(link).hostname or "").casefold()
-        if host and not _is_aggregator(host) and _CAREERS_LINK.search(link):
-            return CompanyApplication(link)
-    return None
+    careers = [
+        link
+        for link in links
+        if (host := (urlsplit(link).hostname or "").casefold())
+        and not _is_aggregator(host)
+        and _CAREERS_LINK.search(link)
+    ]
+    # A link to the role's own page beats the company's general careers page.
+    careers.sort(key=is_careers_listing)
+    return CompanyApplication(careers[0]) if careers else None
+
+
+# Path words of a general careers or openings page, as opposed to one role's page.
+_LISTING_WORDS = frozenset(
+    "careers career jobs job open-positions open-roles openings positions join join-us "
+    "work-with-us company about search opportunities vacancies hiring all en en-us".split()
+)
+
+
+def is_careers_listing(url: str) -> bool:
+    """Whether a link is a company's general careers or openings page, not one role.
+
+    "https://acme.com/careers/" and "https://acme.com/jobs#open" are; a path or query
+    naming a role ("/careers/ai-engineer", "?jobId=123") is not.
+    """
+    parts = urlsplit(url)
+    segments = [segment.casefold() for segment in parts.path.split("/") if segment]
+    return all(segment in _LISTING_WORDS for segment in segments) and not re.search(
+        r"\d", parts.query
+    )
 
 
 def resolve_listing(listing: JobListing, cache: BoardCache) -> JobListing:

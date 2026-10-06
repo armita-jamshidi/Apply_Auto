@@ -150,8 +150,10 @@ def test_job_run_links_existing_jobs_and_dashboard_shows_apply_link(tmp_path) ->
         dashboard.write_dashboard(session, page, fit_threshold=70)
         html = page.read_text(encoding="utf-8")
         assert "href='https://jobs.lever.co/tether/9/apply' class='apply-link'" in html
-        assert "href='https://spade.com/careers' class='apply-link'" in html
+        # Only the general careers page is known: it is labelled as such, and the form
+        # agent is not offered for it.
+        assert "href='https://spade.com/careers' class='apply-link'>Careers page" in html
+        assert "Role page not looked up yet" in html
         assert f"href='{ashby.url}/application' class='apply-link'" in html
-        assert "python -m agent.form_agent --job-url &quot;https://spade.com/careers&quot;" in html
-        assert "--lookup-url &quot;https://news.ycombinator.com/item?id=2&quot;" in html
+        assert "--job-url &quot;https://spade.com/careers&quot;" not in html
     engine.dispose()

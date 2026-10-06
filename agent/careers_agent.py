@@ -48,6 +48,7 @@ from agent.sources.company_apply import (
     BoardCache,
     _is_aggregator,
     board_job_url,
+    is_careers_listing,
     links_in,
     titles_match,
 )
@@ -634,11 +635,44 @@ class CareersAgent:
             LOGGER.warning("Rejected %r at %s: the title is not on any page read.", title, url)
             return Outcome(None, f"Rejected: {title!r} was not found on {url}.")
         title = found
+        if (
+            listing is None
+            and page is not None
+            and (_comparable(title) not in _comparable(page.title) or is_careers_listing(url))
+        ):
+            # A list of openings shows the title too; the role's own page is its link there.
+            # (A role's own page names the role in its title; its "similar jobs" links are
+            # other postings.)
+            role_page = self._role_page_linked_from(page, title)
+            if role_page is not None:
+                url, page = role_page.url, role_page
+            elif is_careers_listing(url):
+                return Outcome(
+                    None, f"Rejected: {url} is the company's list of openings, not the role."
+                )
         posted_at = listing.posted_at if listing is not None else None
         if posted_at is None and page is not None:
             posted_at = page.posted_at
         application = application_link(page) if page is not None and listing is None else None
         return Outcome(CompanyRole(url, title, reason, listing, posted_at, application), reason)
+
+    def _role_page_linked_from(self, page: Page, title: str) -> Page | None:
+        """The role's own page when this page links to it by its title, if it shows it."""
+        wanted = _comparable(title)
+        here = _url_key(page.url)
+        for text, link in page.links:
+            if _url_key(link) == here or not link.startswith(("https://", "http://")):
+                continue
+            if _comparable(text) != wanted and not titles_match(title, text):
+                continue
+            role_page = self.pages.get(_url_key(link))
+            if role_page is None:
+                self._fetch_page(link)
+                role_page = self.pages.get(_url_key(link))
+            shown = _comparable(f"{role_page.title}\n{role_page.text}") if role_page else ""
+            if wanted in shown:
+                return role_page
+        return None
 
 
 CAREERS_PATHS = ("/careers", "/jobs", "/careers/jobs", "/company/careers", "/join-us")

@@ -131,14 +131,17 @@ def test_cleanup_removes_stale_jobs_and_dashboard_shows_posted(session: Session,
     assert "3 days ago" in html
 
 
-def test_company_hosted_greenhouse_jobs_keep_the_company_page_to_apply() -> None:
+def test_company_hosted_greenhouse_jobs_keep_the_company_page_only_when_it_names_the_role() -> None:
     import httpx
 
     from agent.fetchers.greenhouse import fetch_greenhouse_jobs
 
     payload = {
         "jobs": [
-            {"id": 7, "title": "AI Engineer", "absolute_url": "https://acme.com/careers?gh_jid=7"},
+            {"id": 7, "title": "AI Engineer", "absolute_url": "https://acme.com/careers/7?gh_jid=7"},
+            # A list of openings that only carries the id in its query is not the role's page.
+            {"id": 9, "title": "ML Lead", "absolute_url": "https://acme.com/jobs/search?gh_jid=9"},
+            {"id": 10, "title": "LLM Engineer", "absolute_url": "https://acme.com/open#/10"},
             {
                 "id": 8,
                 "title": "ML Engineer",
@@ -149,10 +152,13 @@ def test_company_hosted_greenhouse_jobs_keep_the_company_page_to_apply() -> None
     transport = httpx.MockTransport(lambda _request: httpx.Response(200, json=payload))
     client = httpx.Client(transport=transport)
 
-    hosted, plain = fetch_greenhouse_jobs("acme", "Acme", client=client)
+    hosted, listing_page, routed, plain = fetch_greenhouse_jobs("acme", "Acme", client=client)
 
     assert hosted.url == "https://job-boards.greenhouse.io/acme/jobs/7"
-    assert hosted.apply_url == "https://acme.com/careers?gh_jid=7"
+    assert hosted.apply_url == "https://acme.com/careers/7?gh_jid=7"
+    assert listing_page.url == "https://job-boards.greenhouse.io/acme/jobs/9"
+    assert listing_page.apply_url is None
+    assert routed.apply_url == "https://acme.com/open#/10"
     assert (plain.url, plain.apply_url) == ("https://job-boards.greenhouse.io/acme/jobs/8", None)
 
 
@@ -164,22 +170,62 @@ def test_rediscovery_repairs_a_stored_company_page_link(session: Session, tmp_pa
     )
     session.add(old)
     session.flush()
+    # The company page lists openings, so the fetcher no longer offers it as the role's page.
     fresh = JobListing(
         "greenhouse", "greenhouse", "Acme", "AI Engineer",
         "https://job-boards.greenhouse.io/acme/jobs/7", "Remote - US", "d",
-        apply_url="https://acme.com/careers?gh_jid=7",
     )
 
     assert not persist_job_if_new(session, fresh, "remote_us")
 
     assert old.url == "https://job-boards.greenhouse.io/acme/jobs/7"
-    assert old.apply_url == "https://acme.com/careers?gh_jid=7"
+    assert old.apply_url is None
     assert pipeline.jobs_to_prepare(session, load_settings(), limit=5) == [old]
     page = tmp_path / "dashboard.html"
     dashboard.write_dashboard(session, page, fit_threshold=70)
     html = page.read_text(encoding="utf-8")
-    assert "href='https://acme.com/careers?gh_jid=7' class='apply-link'" in html
+    assert "href='https://job-boards.greenhouse.io/acme/jobs/7' class='apply-link'" in html
     assert "--job-url &quot;https://job-boards.greenhouse.io/acme/jobs/7&quot;" in html
+
+
+def test_dashboard_skips_a_stored_company_page_that_only_lists_openings(session: Session) -> None:
+    listed = Job(
+        source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
+        url="https://job-boards.greenhouse.io/acme/jobs/7",
+        apply_url="https://acme.com/jobs/search?gh_jid=7", location_raw="Remote - US",
+        location_category="remote_us", description="d", status="new",
+    )
+    named = Job(
+        source="greenhouse", platform="greenhouse", company="Acme", title="ML Engineer",
+        url="https://job-boards.greenhouse.io/acme/jobs/8",
+        apply_url="https://acme.com/careers/8?gh_jid=8", location_raw="Remote - US",
+        location_category="remote_us", description="d", status="new",
+    )
+
+    assert dashboard.application_link(listed) == "https://job-boards.greenhouse.io/acme/jobs/7"
+    assert dashboard.application_link(named) == "https://acme.com/careers/8?gh_jid=8"
+
+
+def test_a_general_careers_page_is_labelled_and_not_sent_to_the_form_agent(
+    session: Session,
+) -> None:
+    from agent.sources.company_apply import is_careers_listing
+
+    assert is_careers_listing("https://spade.com/careers/")
+    assert is_careers_listing("https://radar.com/jobs#jobs")
+    assert not is_careers_listing("https://careers.tether.io/o/ai-harness-engineer")
+    assert not is_careers_listing("https://acme.com/careers?jobId=123")
+    job = Job(
+        source="hackernews", platform="hackernews", company="Spade", title="AI Engineer",
+        url="https://news.ycombinator.com/item?id=1", apply_url="https://spade.com/careers/",
+        location_raw="Remote - US", location_category="remote_us", description="d",
+        status="new",
+    )
+    session.add(job)
+    session.flush()
+
+    assert dashboard.fill_command(job) is None
+    assert pipeline.form_agent_target(job) is None
 
 
 def test_jobs_off_their_platform_host_are_not_prepared(session: Session) -> None:
