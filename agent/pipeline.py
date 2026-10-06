@@ -25,6 +25,7 @@ from agent.dashboard import DEFAULT_PORT, refresh_dashboard
 from agent.dashboard import serve as serve_dashboard
 from agent.filters import company_key, is_ambiguous_location, normalize_location
 from agent.main import main as discover
+from agent.postings import close_finished_postings
 from agent.scorer import FitAssessment, score_job
 from agent.settings import (
     PROJECT_ROOT,
@@ -404,6 +405,9 @@ def main(argv: list[str] | None = None) -> int:
                     agent_limit=settings.careers_agent_limit,
                 )
                 print(f"Updated {retitled} jobs from the companies' own careers pages.")
+            closed = close_finished_postings(session)
+            if closed:
+                print(f"Hid {closed} jobs whose postings have closed.")
             removed = remove_out_of_scope_jobs(session, settings)
             if removed:
                 print(f"Removed {removed} jobs outside your target roles.")
