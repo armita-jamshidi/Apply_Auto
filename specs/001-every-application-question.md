@@ -36,8 +36,9 @@ board API (`?questions=true`), leaving out upload-only fields, and answers them 
 time. The kit notes that the questions came from the board, so the Apply panel does not
 say the form is unread. If the request fails, the kit still answers the common questions.
 
-Lever, Ashby, and SmartRecruiters do not publish custom questions in their public APIs,
-so their jobs still need Fill with agent (or a hand-off) to read the form first.
+Only Greenhouse is read this way so far. Lever, Ashby, SmartRecruiters, and company forms
+still need Fill with agent (or a hand-off) to read the form first; whether their public
+APIs expose questions is not yet checked.
 
 ## How to test
 
