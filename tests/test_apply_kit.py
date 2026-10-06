@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -364,3 +365,58 @@ def test_the_apply_panel_says_when_the_form_was_never_read(
     dashboard.write_dashboard(session, page, fit_threshold=70)
 
     assert dashboard.FORM_NOT_READ_NOTE in page.read_text(encoding="utf-8")
+
+
+def test_a_kit_without_a_form_reading_answers_the_boards_questions(
+    session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(apply_kit, "KITS_DIR", tmp_path / "kits")
+    monkeypatch.setattr(dashboard, "KITS_DIR", tmp_path / "kits")
+    job = _job_with_attempts(session)
+    monkeypatch.setattr(
+        apply_kit, "board_questions", lambda _job: ["Why Example Robotics?", "Pronouns"]
+    )
+
+    apply_kit.build_kit(
+        session, job, profile={}, resume_text=RESUME, client=None, answer_model="m",
+        resume_model="m", make_resume=False,
+        answerer=lambda question, _long: AnswerDecision(f"Answer: {question}", "e", False),
+    )
+
+    session.refresh(job)
+    stored = apply_kit.latest_kit(job)
+    assert stored.answers["Why Example Robotics?"] == "Answer: Why Example Robotics?"
+    assert stored.answers["Pronouns"] == "Answer: Pronouns"
+    assert stored.field_notes[apply_kit.BOARD_QUESTIONS_NOTE]
+    page = tmp_path / "dashboard.html"
+    dashboard.write_dashboard(session, page, fit_threshold=70)
+    html = page.read_text(encoding="utf-8")
+    assert "Answer: Pronouns" in html
+    assert dashboard.FORM_NOT_READ_NOTE not in html
+
+
+def test_board_questions_are_read_only_from_greenhouse_links(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "agent.fetchers.greenhouse.fetch_greenhouse_questions",
+        lambda board, job_id: calls.append((board, job_id)) or ["Why Acme?"],
+    )
+    job = _job_with_attempts(session)
+
+    assert apply_kit.board_questions(job) == ["Why Acme?"]
+    assert calls == [("acme", "1")]
+    job.platform = "lever"
+    assert apply_kit.board_questions(job) == []
+
+
+def test_a_failed_board_request_leaves_the_common_questions(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_board: str, _job_id: str) -> list[str]:
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("agent.fetchers.greenhouse.fetch_greenhouse_questions", fail)
+
+    assert apply_kit.board_questions(_job_with_attempts(session)) == []

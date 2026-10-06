@@ -24,7 +24,13 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
-from agent.apply_kit import KITS_DIR, form_was_read, latest_kit, questions_missing_from_kit
+from agent.apply_kit import (
+    BOARD_QUESTIONS_NOTE,
+    KITS_DIR,
+    form_was_read,
+    latest_kit,
+    questions_missing_from_kit,
+)
 from agent.fetchers.greenhouse import greenhouse_job_id, names_role
 from agent.postings import CLOSED
 from agent.settings import PROJECT_ROOT, load_settings
@@ -44,7 +50,7 @@ DEFAULT_PORT = 8765
 NEW_TAB = "target='_blank' rel='noopener'"
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 # Kit notes about the whole kit, not about one question.
-KIT_NOTES = frozenset({"Resume keywords", "Kit problems"})
+KIT_NOTES = frozenset({"Resume keywords", "Kit problems", BOARD_QUESTIONS_NOTE})
 MISSING_FROM_KIT_NOTE = (
     "Found on the form after your answers were prepared. Redo resume and answers to answer it."
 )
@@ -1017,7 +1023,7 @@ def _kit_html(job: Job, kit: Application | None) -> str:
         )
     if notes.get("Kit problems"):
         parts.append(f"<p class='warn'>{escape(notes['Kit problems'])}</p>")
-    if not form_was_read(job):
+    if not form_was_read(job) and BOARD_QUESTIONS_NOTE not in notes:
         parts.append(f"<p class='muted'>{FORM_NOT_READ_NOTE}</p>")
     return f"<div class='kit' id='kit-{job.id}' hidden data-ready='1'>{''.join(parts)}</div>"
 

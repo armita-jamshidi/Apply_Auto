@@ -1,6 +1,6 @@
 # 001: Answer every question on the application page
 
-Status: in progress. Causes 1 and 2 are fixed; reading questions before the form is opened is next.
+Status: done for Greenhouse jobs. Other boards still need a form reading first.
 
 ## Problem
 
@@ -29,11 +29,15 @@ write those answers by hand, which is the work the product promises to remove.
 3. Not a cause for text questions: the fillers record every question they see in
    `answers`. Only upload fields (cover letter, other files) are notes-only, by design.
 
-## Next
+## Questions before the form is read
 
-Read a job's questions before anyone opens the form, from the board's public API where it
-publishes them (Greenhouse returns them with `?questions=true`), so the kit answers them
-the first time.
+When no form reading exists, the kit reads a Greenhouse job's questions from the public
+board API (`?questions=true`), leaving out upload-only fields, and answers them the first
+time. The kit notes that the questions came from the board, so the Apply panel does not
+say the form is unread. If the request fails, the kit still answers the common questions.
+
+Lever, Ashby, and SmartRecruiters do not publish custom questions in their public APIs,
+so their jobs still need Fill with agent (or a hand-off) to read the form first.
 
 ## How to test
 

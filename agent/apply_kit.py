@@ -30,6 +30,8 @@ from db.models import Application, Job
 LOGGER = logging.getLogger(__name__)
 KITS_DIR = PROJECT_ROOT / "kits"
 KIT_MODE = "kit"
+# Kit note saying the form's questions were read from the job board's API.
+BOARD_QUESTIONS_NOTE = "Form questions"
 Ask = Callable[[str], str | None]
 
 
@@ -41,6 +43,7 @@ class Kit:
     resume_path: Path | None = None
     report_path: Path | None = None
     problems: list[str] = field(default_factory=list)
+    from_board: bool = False  # the questions came from the board's API, not a form reading
 
 
 def kit_folder(job_id: int) -> Path:
@@ -68,6 +71,9 @@ def build_kit(
     kit = Kit()
     job_context = {"company": job.company, "title": job.title, "description": job.description}
     recorded = _form_answers(job)
+    if not recorded:
+        recorded = dict.fromkeys(board_questions(job))
+        kit.from_board = bool(recorded)
 
     def default_answerer(question: str, long_form: bool) -> Any:
         return answer_custom_question(
@@ -116,6 +122,8 @@ def record_kit(session: Session, job: Job, kit: Kit) -> Application:
     }
     drafts = {item.question: item.answer for item in kit.answers if item.kind == "draft"}
     notes = {item.question: item.note for item in kit.answers if item.note}
+    if kit.from_board:
+        notes[BOARD_QUESTIONS_NOTE] = "Read from the job board's listing."
     if kit.problems:
         notes["Kit problems"] = "; ".join(kit.problems)
     if kit.report_path is not None and kit.report_path.is_file():
@@ -158,6 +166,27 @@ def _form_answers(job: Job) -> dict[str, Any]:
             if recorded.get(question) == draft:
                 recorded[question] = None
     return recorded
+
+
+def board_questions(job: Job) -> list[str]:
+    """The job's form questions from its board's public API, where the board publishes them
+    (Greenhouse); empty when it does not or the request fails, so the kit still runs."""
+    from agent.fetchers.greenhouse import (
+        fetch_greenhouse_questions,
+        greenhouse_board_token,
+        greenhouse_job_id,
+    )
+
+    if job.platform != "greenhouse":
+        return []
+    board, job_id = greenhouse_board_token(job.url), greenhouse_job_id(job.url)
+    if not board or not job_id:
+        return []
+    try:
+        return fetch_greenhouse_questions(board, job_id)
+    except Exception as error:  # the common questions are still answered
+        LOGGER.warning("Could not read the form questions for job %s: %s", job.id, error)
+        return []
 
 
 def form_was_read(job: Job) -> bool:

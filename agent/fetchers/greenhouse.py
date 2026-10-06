@@ -13,6 +13,9 @@ from .http import parse_posted, request_json
 
 LOGGER = logging.getLogger(__name__)
 GREENHOUSE_JOBS_URL = "https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs"
+GREENHOUSE_JOB_URL = GREENHOUSE_JOBS_URL + "/{job_id}"
+# Upload and hidden fields are not questions the candidate answers in words.
+NOT_ANSWERABLE_FIELDS = frozenset({"input_file", "input_hidden"})
 
 
 def fetch_greenhouse_jobs(
@@ -106,6 +109,64 @@ def greenhouse_job_id(url: str) -> str | None:
         return found
     match = re.search(r"/jobs/(\d+)", parts.path)
     return match.group(1) if match else None
+
+
+def fetch_greenhouse_questions(
+    board_token: str,
+    job_id: str,
+    *,
+    client: httpx.Client | None = None,
+    max_retries: int = 3,
+    backoff_seconds: float = 0.5,
+) -> list[str]:
+    """The questions on a Greenhouse job's application form, in form order, from the public
+    board API, without opening the form. Upload fields (resume, cover letter) are left out."""
+    owns_client = client is None
+    http = client or httpx.Client(timeout=20.0)
+    url = GREENHOUSE_JOB_URL.format(board_token=board_token.strip(), job_id=job_id.strip())
+    try:
+        payload = request_json(
+            http,
+            url,
+            params={"questions": "true"},
+            max_retries=max_retries,
+            backoff_seconds=backoff_seconds,
+            validate=_as_job,
+        )
+    finally:
+        if owns_client:
+            http.close()
+    questions: list[str] = []
+    for item in [*(payload.get("questions") or []), *(payload.get("location_questions") or [])]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        types = {str(field.get("type")) for field in item.get("fields") or []
+                 if isinstance(field, dict)}
+        if label and label not in questions and not types <= NOT_ANSWERABLE_FIELDS:
+            questions.append(label)
+    return questions
+
+
+def greenhouse_board_token(url: str) -> str | None:
+    """The board token in a Greenhouse-hosted job link ("job-boards.greenhouse.io/acme/jobs/1")."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").casefold()
+    if host != "greenhouse.io" and not host.endswith(".greenhouse.io"):
+        return None
+    found = (parse_qs(parts.query).get("for") or [""])[0]
+    if found:
+        return found
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if len(segments) >= 3 and segments[1] == "jobs":
+        return segments[0]
+    return None
+
+
+def _as_job(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Greenhouse job response must be an object")
+    return payload
 
 
 def _as_mapping(payload: object) -> dict[str, Any]:
