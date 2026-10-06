@@ -17,6 +17,7 @@ dependencies = [
     "pypdf>=5,<7",
     "psycopg[binary]>=3.1,<4",
     "PyYAML>=6,<7",
+    "python-docx>=1.1,<2",
     "python-dotenv>=1,<2",
     "SQLAlchemy>=2,<3",
     "tzdata>=2024.1; sys_platform == 'win32'",
@@ -29,6 +30,7 @@ job-dashboard = "agent.dashboard:main"
 job-run = "agent.pipeline:main"
 job-agent-fill = "agent.form_agent:main"
 job-company-pages = "agent.careers_agent:main"
+job-kit = "agent.apply_kit:main"
 
 [project.optional-dependencies]
 dev = [

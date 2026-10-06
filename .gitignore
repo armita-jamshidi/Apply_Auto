@@ -5,6 +5,8 @@
 /profile/*resume*.pdf
 # Private essays, project write-ups, and other source material for answers
 /profile/library/
+# Samples of your own writing, used only to match your voice in written answers
+/profile/writing_samples/
 /.env
 /.env.*
 !/.env.example
@@ -12,6 +14,7 @@
 # Browser state and generated artifacts
 /screenshots/
 /reviews/
+/kits/
 /dashboard.html
 /.playwright/
 /playwright/.auth/

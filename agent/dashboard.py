@@ -14,7 +14,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -24,7 +24,9 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
+from agent.apply_kit import KITS_DIR, latest_kit
 from agent.fetchers.greenhouse import greenhouse_job_id, names_role
+from agent.postings import CLOSED
 from agent.settings import PROJECT_ROOT, load_settings
 from agent.sources.company_apply import _is_aggregator, is_careers_listing
 from agent.tracking import REMOVED, mark_job
@@ -38,6 +40,11 @@ PROFILE_PATH = PROJECT_ROOT / "profile" / "profile.yaml"
 LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 REVIEWS_DIR = PROJECT_ROOT / "reviews"
 DEFAULT_PORT = 8765
+# Links to company pages open in a new tab, so the dashboard and its Apply panel stay open.
+NEW_TAB = "target='_blank' rel='noopener'"
+DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# Kit notes about the whole kit, not about one question.
+KIT_NOTES = frozenset({"Resume keywords", "Kit problems"})
 # Display order, label, and job.status values for each dashboard group.
 GROUPS = (
     ("ready", "Ready for you", {"manual_review"}),
@@ -66,7 +73,9 @@ def dashboard_rows(session: Session, *, fresh_days: int = 7) -> list[DashboardRo
     """
     fresh_since = datetime.now(UTC) - timedelta(days=fresh_days)
     jobs = session.scalars(
-        select(Job).options(selectinload(Job.applications)).where(Job.status != REMOVED)
+        select(Job)
+        .options(selectinload(Job.applications))
+        .where(Job.status.not_in((REMOVED, CLOSED)))
     ).all()
     rows: list[DashboardRow] = []
     for job in jobs:
@@ -341,9 +350,12 @@ want; removed jobs are not found again.</p>
 <div class="panel-head"><div><h2 id="panel-title"></h2>
 <div class="muted" id="panel-company"></div></div>
 <button type="button" id="panel-close" aria-label="Close panel">Close</button></div>
-<p><a id="panel-apply" target="_blank" rel="noopener">Open the application</a>
-<span class="muted"> in your own browser, then copy answers from here, or</span>
+<p><a id="panel-apply" target="_blank" rel="noopener">Open the job page</a>
+<span class="muted"> in a new tab, then copy answers from here, or</span>
 <button type="button" id="panel-fill" class="fill">Fill with agent</button></p>
+<h3>Your resume for this job</h3>
+<div id="panel-resume"></div>
+<button type="button" id="panel-kit" class="primary">Prepare resume and answers</button>
 <h3>This application</h3>
 <div id="panel-answers"></div>
 <h3>Ask about a question</h3>
@@ -372,6 +384,11 @@ function apply() {{
   }}
 }}
 document.addEventListener('click', async (event) => {{
+  const applyLink = event.target.closest('a.apply-link');
+  if (applyLink && applyLink.closest('tr[data-job]')) {{
+    openPanel(applyLink.closest('tr[data-job]'));
+    return;
+  }}
   const toggle = event.target.closest('button.toggle');
   if (toggle) {{
     const row = toggle.closest('tr');
@@ -468,9 +485,73 @@ function openPanel(row) {{
     answers.append(note);
   }}
   document.getElementById('panel-asked').replaceChildren();
+  const kit = document.getElementById('kit-' + row.dataset.job);
+  const ready = Boolean(kit && kit.dataset.ready === '1');
+  const resume = document.getElementById('panel-resume');
+  resume.replaceChildren();
+  if (ready) {{
+    for (const node of kit.children) resume.append(node.cloneNode(true));
+  }} else {{
+    const none = document.createElement('p');
+    none.className = 'muted';
+    none.textContent = 'No resume for this job yet. Prepare one that uses the exact keywords '
+      + 'of the job description, with answers to every question.';
+    resume.append(none);
+  }}
+  document.getElementById('panel-kit').textContent =
+    ready ? 'Redo resume and answers' : 'Prepare resume and answers';
   panel.hidden = false;
   document.body.classList.add('with-panel');
 }}
+async function kitStamp(jobId) {{
+  const response = await fetch('/jobs/' + jobId + '/kit');
+  return response.ok ? (await response.json()).kit : null;
+}}
+document.getElementById('panel-kit').addEventListener('click', async () => {{
+  if (!panelJob) return;
+  if (!LIVE) {{
+    notify('Run "job-dashboard" to prepare a resume from here, or run: job-kit --job-id '
+      + panelJob);
+    return;
+  }}
+  const jobId = panelJob;
+  const button = document.getElementById('panel-kit');
+  button.disabled = true;
+  try {{
+    const before = await kitStamp(jobId);
+    const response = await fetch('/jobs/' + jobId + '/kit', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json', 'X-Job-Dashboard': '1' }},
+      body: '{{}}',
+    }});
+    const reply = await response.json();
+    if (!response.ok) throw new Error(reply.error || response.statusText);
+    notify(reply.message);
+    button.textContent = 'Preparing...';
+    const started = Date.now();
+    const timer = setInterval(async () => {{
+      const now = await kitStamp(jobId).catch(() => before);
+      if (now && now !== before) {{
+        clearInterval(timer);
+        try {{ sessionStorage.setItem('openPanel', jobId); }} catch {{}}
+        location.reload();
+      }} else if (Date.now() - started > 20 * 60 * 1000) {{
+        clearInterval(timer);
+        button.disabled = false;
+        button.textContent = 'Prepare resume and answers';
+      }}
+    }}, 5000);
+  }} catch (error) {{
+    notify('Could not start: ' + error.message);
+    button.disabled = false;
+  }}
+}});
+try {{
+  const reopen = sessionStorage.getItem('openPanel');
+  sessionStorage.removeItem('openPanel');
+  const row = reopen && document.querySelector('tr[data-job="' + reopen + '"]');
+  if (row) openPanel(row);
+}} catch {{}}
 document.getElementById('panel-close').addEventListener('click', () => {{
   panel.hidden = true;
   document.body.classList.remove('with-panel');
@@ -622,7 +703,9 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
     apply = application_link(job)
     if apply != job.url and is_careers_listing(apply):
         # Only the company's general careers page is known: say so instead of "Apply".
-        links = [f"<a href='{escape(apply)}' class='apply-link'>Careers page</a>"]
+        links = [
+            f"<a href='{escape(apply)}' class='apply-link' {NEW_TAB}>Careers page</a>"
+        ]
         note = (
             "Role not found on the company's site"
             if job.company_page_checked_at is not None
@@ -630,12 +713,21 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         )
         links.append(f"<div class='muted'>{note}</div>")
     else:
-        links = [f"<a href='{escape(apply)}' class='apply-link'>Apply</a>"]
+        links = [f"<a href='{escape(apply)}' class='apply-link' {NEW_TAB}>Apply</a>"]
     if apply != job.url:
         links.append(f"<a href='{escape(job.url)}'>Posting</a>")
-    if _is_aggregator((urlsplit(apply).hostname or "").casefold()) and not is_fillable(
-        job.platform, apply
-    ):
+    board_host = (urlsplit(apply).hostname or "").casefold()
+    if _is_aggregator(board_host) and not is_fillable(job.platform, apply):
+        # Only the job board's page is known; such pages (Himalayas) often show a bot check
+        # or a blank page, so name the link for what it is and offer a search for the role.
+        site = board_host.removeprefix("www.").split(".")[0].title()
+        links[0] = (
+            f"<a href='{escape(apply)}' class='apply-link' {NEW_TAB}>{escape(site)} listing</a>"
+        )
+        links.append(
+            f"<a href='{escape(company_search_url(job))}' target='_blank' rel='noopener'>"
+            "Find on company site</a>"
+        )
         note = (
             "Not on the company's site"
             if job.company_page_checked_at is not None
@@ -690,7 +782,8 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         f"{job.company} {job.title} {job.listed_title or ''} {job.location_raw}".casefold()
     )
     detail_id = f"detail-{job.id}"
-    fields = _answer_rows(row.latest)
+    kit = latest_kit(job)
+    fields = _answer_rows(kit or row.latest)
     answered = ""
     if fields:
         filled = sum(field.status == "filled" for field in fields)
@@ -710,7 +803,8 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
         f"<td>{_posted_html(job.posted_at, fresh)}</td>"
         f"<td>{_match_html(job.fit_score, fit_threshold)}</td>"
         f"<td>{escape(activity)} {escape(_format_date(when))}</td>"
-        f"<td class='links'>{''.join(links)}{answered}{controls}{finish}</td>"
+        f"<td class='links'>{''.join(links)}{answered}{controls}{finish}"
+        f"{_kit_html(job, kit)}</td>"
         "</tr>\n"
         f"<tr class='detail' id='{detail_id}' hidden><td colspan='9'>"
         f"{_detail_html(row, fields)}</td></tr>"
@@ -810,6 +904,12 @@ def application_link(job: Job) -> str:
     return job.url
 
 
+def company_search_url(job: Job) -> str:
+    """A web search for the role on the company's own site, when no company link is known."""
+    query = f'"{job.company}" "{job.listed_title or job.title}" careers apply'
+    return "https://www.google.com/search?" + urlencode({"q": query})
+
+
 def _lists_openings(job: Job) -> bool:
     """Whether a Greenhouse job's company page is a list of openings, not the role.
 
@@ -861,15 +961,44 @@ def _answer_rows(application: Application | None) -> list[FieldRow]:
     """The latest attempt's fields as its review page shows them, without the resume row."""
     if application is None or not _has_answers(application):
         return []
+    notes = {
+        label: note
+        for label, note in (application.field_notes or {}).items()
+        if label not in KIT_NOTES
+    }
     result = ApplierResult(
         "dry_run_ready",
         dict(application.answers or {}),
         None,
         None,
         suggested_answers=dict(application.suggested_answers or {}),
-        field_notes=dict(application.field_notes or {}),
+        field_notes=notes,
     )
     return [field for field in review_rows(result, "") if field.label != "Resume"]
+
+
+def _kit_html(job: Job, kit: Application | None) -> str:
+    """The job's tailored resume and keyword report, hidden; the Apply panel shows them."""
+    if kit is None:
+        return f"<div class='kit' id='kit-{job.id}' hidden data-ready='0'></div>"
+    parts = []
+    resume = Path(kit.tailored_resume_path) if kit.tailored_resume_path else None
+    if resume is not None and resume.is_file():
+        parts.append(
+            f"<p><a class='resume-link' href='/kits/{job.id}/resume' "
+            f"download='{escape(resume.name)}'>"
+            f"Download your resume for this job</a> <span class='muted'>(Word, "
+            f"{escape(_format_date(kit.started_at))})</span></p>"
+        )
+    notes = kit.field_notes or {}
+    if notes.get("Resume keywords"):
+        parts.append(
+            "<details><summary>Keywords from the job description</summary>"
+            f"<pre>{escape(notes['Resume keywords'])}</pre></details>"
+        )
+    if notes.get("Kit problems"):
+        parts.append(f"<p class='warn'>{escape(notes['Kit problems'])}</p>")
+    return f"<div class='kit' id='kit-{job.id}' hidden data-ready='1'>{''.join(parts)}</div>"
 
 
 def _detail_html(row: DashboardRow, fields: list[FieldRow]) -> str:
@@ -997,6 +1126,18 @@ def make_handler(
                     write_dashboard(session)
                 self._send(200, DASHBOARD_PATH.read_bytes(), "text/html; charset=utf-8")
                 return
+            stamp = re.fullmatch(r"/jobs/(\d+)/kit", self.path)
+            if stamp is not None:
+                with session_factory() as session:
+                    job = session.get(Job, int(stamp[1]))
+                    kit = latest_kit(job) if job is not None else None
+                    made = kit.started_at.isoformat() if kit is not None else None
+                self._json(200, {"kit": made})
+                return
+            resume = re.fullmatch(r"/kits/(\d+)/resume", self.path)
+            if resume is not None:
+                self._resume(int(resume[1]))
+                return
             match = re.fullmatch(r"/reviews/([\w.-]+\.html)", self.path)
             review = REVIEWS_DIR / match[1] if match else None
             if review is not None and review.is_file():
@@ -1014,7 +1155,7 @@ def make_handler(
             body = self.rfile.read(length) if length > 0 else b""
             if not self._trusted():
                 return
-            match = re.fullmatch(r"/jobs/(\d+)/(status|answer|fill)", self.path)
+            match = re.fullmatch(r"/jobs/(\d+)/(status|answer|fill|kit)", self.path)
             # A custom header cannot be sent cross-site without a CORS preflight, which this
             # server never approves, so other web pages cannot change your jobs.
             if match is None or self.headers.get("X-Job-Dashboard") != "1":
@@ -1032,6 +1173,9 @@ def make_handler(
                 return
             if match[2] == "fill":
                 self._fill(int(match[1]))
+                return
+            if match[2] == "kit":
+                self._kit(int(match[1]))
                 return
             with session_factory() as session:
                 job = session.get(Job, int(match[1]))
@@ -1076,6 +1220,53 @@ def make_handler(
                     "when it finishes (reload the page)."
                 },
             )
+
+        def _kit(self, job_id: int) -> None:
+            with session_factory() as session:
+                job = session.get(Job, job_id)
+                described = job is not None and bool((job.description or "").strip())
+            if job is None:
+                self._json(404, {"error": "No such job"})
+                return
+            if not described:
+                self._json(400, {"error": "This job has no description to tailor a resume to."})
+                return
+            problem = check_api()
+            if problem is not None:
+                self._json(503, {"error": problem})
+                return
+            try:
+                launch([sys.executable, "-m", "agent.apply_kit", "--job-id", str(job_id)])
+            except OSError as error:
+                self._json(500, {"error": f"Could not start: {error}"})
+                return
+            self._json(
+                200,
+                {
+                    "message": "Preparing your resume and answers in a new window. It may ask "
+                    "there how you used a skill the job wants; answer or press Enter to skip. "
+                    "This panel updates when it finishes."
+                },
+            )
+
+        def _resume(self, job_id: int) -> None:
+            with session_factory() as session:
+                job = session.get(Job, job_id)
+                kit = latest_kit(job) if job is not None else None
+                stored = kit.tailored_resume_path if kit is not None else None
+            path = Path(stored).resolve() if stored else None
+            # Only files the kit wrote under kits/ are served.
+            if path is None or not path.is_file() or KITS_DIR.resolve() not in path.parents:
+                self._json(404, {"error": "No tailored resume for this job yet."})
+                return
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", DOCX_TYPE)
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
 
         def _answer(self, job_id: int, question: str) -> None:
             if not question:

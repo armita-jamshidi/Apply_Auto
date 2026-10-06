@@ -13,7 +13,12 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent.library import LibraryDocument, has_extra_sources, load_library
+from agent.library import (
+    LibraryDocument,
+    has_extra_sources,
+    load_library,
+    load_writing_samples,
+)
 from agent.library_agent import draft_from_library
 from agent.settings import load_settings
 
@@ -118,6 +123,7 @@ def answer_custom_question(
     job_context: Mapping[str, str] | None = None,
     long_form: bool = False,
     library_dir: Path | None = None,
+    writing_dir: Path | None = None,
 ) -> AnswerDecision:
     """Apply user-approved response rules or return a grounded answer/draft.
 
@@ -126,6 +132,8 @@ def answer_custom_question(
 
     When the source library (profile/library/, or library_dir) holds essays or write-ups
     beyond the resume, written drafts come from an agent that decides what to look up there.
+    Samples of the candidate's writing (profile/writing_samples/, or writing_dir) set the
+    voice of those drafts.
     """
     if not question.strip():
         raise ValueError("question cannot be empty")
@@ -154,9 +162,10 @@ def answer_custom_question(
             profile_facts=profile_facts,
             job_description=(job_context or {}).get("description", ""),
         )
-        if has_extra_sources(documents):
+        samples = load_writing_samples(writing_dir)
+        if has_extra_sources(documents) or samples:
             return _draft_from_library(
-                question, documents, job_context or {}, model_name, anthropic_client
+                question, documents, job_context or {}, model_name, anthropic_client, samples
             )
         return _draft_motivation_answer(
             question,
@@ -412,8 +421,16 @@ def _draft_from_library(
     job_context: Mapping[str, str],
     model: str,
     client: Anthropic,
+    writing_samples: list[str] | None = None,
 ) -> AnswerDecision:
-    draft = draft_from_library(question, documents, job_context, model=model, client=client)
+    draft = draft_from_library(
+        question,
+        documents,
+        job_context,
+        model=model,
+        client=client,
+        writing_samples=writing_samples,
+    )
     if draft.answer is None:
         return _manual(draft.reason or "The source library does not support a draft.")
     citations = "\n".join(f"[{claim.doc_id}] {claim.evidence}" for claim in draft.claims)

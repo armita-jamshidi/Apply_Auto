@@ -152,7 +152,10 @@ def test_job_run_links_existing_jobs_and_dashboard_shows_apply_link(tmp_path) ->
         assert "href='https://jobs.lever.co/tether/9/apply' class='apply-link'" in html
         # Only the general careers page is known: it is labelled as such, and the form
         # agent is not offered for it.
-        assert "href='https://spade.com/careers' class='apply-link'>Careers page" in html
+        assert (
+            "href='https://spade.com/careers' class='apply-link' target='_blank' "
+            "rel='noopener'>Careers page"
+        ) in html
         assert "Role page not looked up yet" in html
         assert f"href='{ashby.url}/application' class='apply-link'" in html
         assert "--job-url &quot;https://spade.com/careers&quot;" not in html

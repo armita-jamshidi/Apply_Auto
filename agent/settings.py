@@ -61,6 +61,7 @@ class AgentSettings:
     max_posting_age_days: int | None = None
     form_agent_model: str = "claude-opus-5-5"
     careers_agent_model: str = "claude-sonnet-5-5"
+    resume_tailor_model: str = "claude-opus-5-5"
     careers_agent_limit: int = 5
     fresh_posting_days: int = 7
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
@@ -122,6 +123,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         remote_boards=_keywords(discovery.get("remote_boards"), ()),
         form_agent_model=str(raw.get("form_agent_model") or "claude-opus-5-5"),
         careers_agent_model=str(raw.get("careers_agent_model") or anthropic_model),
+        resume_tailor_model=str(raw.get("resume_tailor_model") or "claude-opus-5-5"),
         careers_agent_limit=int(discovery.get("careers_agent_limit", 5)),
         fresh_posting_days=int(discovery.get("fresh_posting_days", 7)),
         max_posting_age_days=(

@@ -20,6 +20,8 @@ from agent.settings import PROJECT_ROOT
 
 LOGGER = logging.getLogger(__name__)
 LIBRARY_DIR = PROJECT_ROOT / "profile" / "library"
+WRITING_DIR = PROJECT_ROOT / "profile" / "writing_samples"
+WRITING_CHARS = 12000
 TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 CHUNK_CHARS = 900
 READ_CHARS = 6000
@@ -67,6 +69,27 @@ def load_library(
                 doc_id = path.relative_to(folder).as_posix()
                 documents.append(LibraryDocument(doc_id, _title(path, text), text.strip()))
     return documents
+
+
+def load_writing_samples(folder: Path | None = None, *, limit: int = WRITING_CHARS) -> list[str]:
+    """The candidate's own writing (essays, cover letters, posts), for matching their voice.
+
+    Samples teach style only; they are not evidence for facts. At most limit characters in
+    total are kept, whole samples first.
+    """
+    folder = folder or WRITING_DIR
+    samples: list[str] = []
+    total = 0
+    if folder.is_dir():
+        for path in sorted(folder.rglob("*")):
+            text = _read_file(path).strip() if path.is_file() else ""
+            if not text:
+                continue
+            text = text[: max(0, limit - total)]
+            if text:
+                samples.append(text)
+                total += len(text)
+    return samples
 
 
 def has_extra_sources(documents: Iterable[LibraryDocument]) -> bool:

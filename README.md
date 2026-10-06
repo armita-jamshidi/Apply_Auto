@@ -17,7 +17,8 @@ Job Agent is a privacy-conscious job search assistant. It finds AI and agent eng
   - The **library agent** drafts written answers from a private folder of essays and project write-ups. Every sentence must carry a quote from a named document, and code verifies each quote.
 - **Grounded answers.** Structured outputs validated with Pydantic are used for fit scoring and for answers. Factual answers must be exact phrases from the profile or resume. Written drafts cite evidence for every sentence and are never submitted without the candidate's review.
 - **The candidate submits.** Every run is a dry run unless stated otherwise. A dry run saves a screenshot and an HTML review page. Hand-off mode fills the form in Chrome and leaves the window open for the candidate. Assist mode lets the candidate copy answers into their own browser. Live mode is opt-in and guarded by fit re-checks, daily and per-company caps, and fail-closed handling of unconfirmed submissions.
-- **Local dashboard.** It shows every job with its fit score, posting age, and prepared answers. Buttons let the candidate mark a job applied, undo, remove it, or start the form agent on the job's real form.
+- **An apply kit for each job, from two sub-agents.** The **resume sub-agent** rebuilds the resume from a long private experience bank around the job description's exact keywords (its action verbs and tech stack), showing how each tool was used in each project. Every bullet must quote its sources, and code rejects any tool or number the sources don't support; keywords with no evidence are asked about, not invented. The output is a Word document. The **answers sub-agent** answers every question on the form, plus why this company, why this role, and a technical project, specific to the company and role and written in the candidate's voice from their writing samples.
+- **Local dashboard.** It shows every job with its fit score, posting age, and prepared answers. Clicking **Apply** opens the role on the company's site in a new tab and opens a sidebar with every answer (with Copy buttons) and the tailored resume to download. Buttons let the candidate prepare the kit, mark a job applied, undo, remove it, or start the form agent on the job's real form.
 - **Privacy by design.** Personal data never enters Git. A custom pre-commit hook blocks private files and any line containing identifying values from the local profile.
 
 ## Tech Stack
@@ -28,7 +29,7 @@ Job Agent is a privacy-conscious job search assistant. It finds AI and agent eng
 | LLM | Anthropic Claude API: Sonnet 5.5 for scoring, answers, and the careers agent; Opus 5.5 for the form agent. Uses tool use, structured outputs, web search, and refusal fallback |
 | Browser automation | Playwright (Chromium and installed Chrome) |
 | Data | SQLAlchemy 2 with SQLite (default) or PostgreSQL 16; Alembic migrations; Pydantic v2 |
-| HTTP and documents | httpx, pypdf, PyYAML, python-dotenv |
+| HTTP and documents | httpx, pypdf, python-docx (tailored resumes), PyYAML, python-dotenv |
 | Web UI | Standard-library `http.server`, HTML, CSS, JavaScript |
 | Quality | pytest (offline: mocked HTTP and SDK, real headless browser), Ruff, GitHub Actions CI |
 | Infrastructure | Docker Compose (optional Postgres), Git pre-commit hook |
@@ -57,6 +58,9 @@ agent/
   careers_agent.py          finds the role on the company's own site
   form_agent.py (+ .js)     agent for unfamiliar forms
   library_agent.py          cited drafts from the private source library
+  apply_kit.py              job-kit: runs the resume and answers sub-agents for one job
+  resume_tailor.py          resume sub-agent: exact-keyword resume, every bullet sourced
+  answer_agent.py           answers sub-agent: every question for one job
   dashboard.py              local dashboard server
   fetchers/, sources/       job board APIs and remote sources
   applier/                  board form fillers, review pages, hand-off/assist/live CLI
@@ -76,7 +80,7 @@ python scripts/install_hooks.py      # privacy guard
 job-run                              # discover, score, prepare, open the dashboard
 ```
 
-Put your private profile in `profile/profile.yaml` (see the fictional [profile.example.yaml](profile/profile.example.yaml)). Optional essays go in `profile/library/`. Both locations are git-ignored. The scope, models, and caps are set in [config/settings.yaml](config/settings.yaml).
+Put your private profile in `profile/profile.yaml` (see the fictional [profile.example.yaml](profile/profile.example.yaml)). Put your long list of jobs, projects, and activities (any Markdown, text, PDF, or Word files) in `profile/library/`, and samples of your own writing in `profile/writing_samples/`. All three are git-ignored and blocked by the privacy hook. The scope, models, and caps are set in [config/settings.yaml](config/settings.yaml).
 
 | Command | What it does |
 | --- | --- |
@@ -85,9 +89,12 @@ Put your private profile in `profile/profile.yaml` (see the fictional [profile.e
 | `job-apply` | Fill a Greenhouse, Lever, Ashby, or SmartRecruiters form (dry run; `--hand-off`, `--assist`, `--live`) |
 | `job-agent-fill` | Run the form agent on any other application form |
 | `job-company-pages` | Find third-party jobs on the company's own site |
+| `job-kit` | Build one job's kit: tailored resume and every answer (`--list` for job ids, `--question` for one-off answers) |
 | `job-dashboard` | Serve the dashboard at `http://127.0.0.1:8765/` |
 
 Run `pytest` and `ruff check .` to test and lint. The tests make no network or API calls.
+
+For Claude Code, [.claude/skills/](.claude/skills/) has three skills (`apply-kit`, `tailor-resume`, `answer-questions`) that run these commands directly instead of re-deriving the workflow.
 
 ## Safety Rules
 
@@ -106,8 +113,7 @@ Run `pytest` and `ruff check .` to test and lint. The tests make no network or A
 
 ## Roadmap
 
-Phases 1–11 are done (Oct 1–5, 2026). They cover discovery, fit scoring, board fillers, live safeguards, hand-off and assist modes, the dashboard, targeted discovery, the form agent, the source library, the careers agent, and fresh postings first. Three phases are planned:
+Phases 1–12 are done (Oct 1–6, 2026). They cover discovery, fit scoring, board fillers, live safeguards, hand-off and assist modes, the dashboard, targeted discovery, the form agent, the source library, the careers agent, fresh postings first, and the apply kit (tailored resume and answers). Two phases are planned:
 
 - LinkedIn alert email parsing
-- Grounded resume tailoring
 - Daily scheduling
