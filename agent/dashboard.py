@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from agent.applier.base import application_urls
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
-from agent.apply_kit import KITS_DIR, latest_kit
+from agent.apply_kit import KITS_DIR, form_was_read, latest_kit, questions_missing_from_kit
 from agent.fetchers.greenhouse import greenhouse_job_id, names_role
 from agent.postings import CLOSED
 from agent.settings import PROJECT_ROOT, load_settings
@@ -45,6 +45,13 @@ NEW_TAB = "target='_blank' rel='noopener'"
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 # Kit notes about the whole kit, not about one question.
 KIT_NOTES = frozenset({"Resume keywords", "Kit problems"})
+MISSING_FROM_KIT_NOTE = (
+    "Found on the form after your answers were prepared. Redo resume and answers to answer it."
+)
+FORM_NOT_READ_NOTE = (
+    "This job's application form has not been read yet, so only the common questions are "
+    "answered. Use Fill with agent to read the form, then redo resume and answers."
+)
 # Display order, label, and job.status values for each dashboard group.
 GROUPS = (
     ("ready", "Ready for you", {"manual_review"}),
@@ -784,6 +791,8 @@ def _row_html(row: DashboardRow, fit_threshold: int, fresh_since: datetime) -> s
     detail_id = f"detail-{job.id}"
     kit = latest_kit(job)
     fields = _answer_rows(kit or row.latest)
+    if kit is not None:
+        fields += _missing_rows(job, kit)
     answered = ""
     if fields:
         filled = sum(field.status == "filled" for field in fields)
@@ -977,6 +986,16 @@ def _answer_rows(application: Application | None) -> list[FieldRow]:
     return [field for field in review_rows(result, "") if field.label != "Resume"]
 
 
+def _missing_rows(job: Job, kit: Application) -> list[FieldRow]:
+    """Rows for questions on the form that the kit has no answer for, so none are hidden."""
+    return [
+        FieldRow(question, "filled", value, "Filled from your profile on the form.")
+        if value
+        else FieldRow(question, "manual_review", None, MISSING_FROM_KIT_NOTE)
+        for question, value in questions_missing_from_kit(job, kit)
+    ]
+
+
 def _kit_html(job: Job, kit: Application | None) -> str:
     """The job's tailored resume and keyword report, hidden; the Apply panel shows them."""
     if kit is None:
@@ -998,6 +1017,8 @@ def _kit_html(job: Job, kit: Application | None) -> str:
         )
     if notes.get("Kit problems"):
         parts.append(f"<p class='warn'>{escape(notes['Kit problems'])}</p>")
+    if not form_was_read(job):
+        parts.append(f"<p class='muted'>{FORM_NOT_READ_NOTE}</p>")
     return f"<div class='kit' id='kit-{job.id}' hidden data-ready='1'>{''.join(parts)}</div>"
 
 

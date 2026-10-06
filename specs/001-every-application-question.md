@@ -1,6 +1,6 @@
 # 001: Answer every question on the application page
 
-Status: planned (ROADMAP "Now", item 1)
+Status: in progress. Causes 1 and 2 are fixed; reading questions before the form is opened is next.
 
 ## Problem
 
@@ -18,14 +18,22 @@ write those answers by hand, which is the work the product promises to remove.
 - Questions on later form pages, inside iframes, and in custom widgets are included.
 - Re-reading the form after a kit was built adds the new questions to the sidebar.
 
-## Suspected causes (confirm before fixing)
+## Causes
 
-1. `agent/apply_kit.py` `_form_answers` takes questions only from the job's latest form
-   attempt. A job whose form was never read gets only the three common questions.
-2. `agent/dashboard.py` shows `kit or row.latest`: once a kit exists, questions found by a
-   later form read are not shown until the kit is rebuilt.
-3. Form fillers may record some fields only as notes (`field_notes`) and not as questions,
-   so `questions_for_job` never sees them.
+1. Confirmed. `_form_answers` in `agent/apply_kit.py` took questions only from the job's
+   latest form attempt, so questions an earlier reading found were lost. It now merges every
+   attempt. A job whose form was never read still gets only the three common questions; the
+   Apply panel now says so.
+2. Confirmed. `agent/dashboard.py` showed only the kit once one existed, hiding questions a
+   later form reading found. Those questions now appear in the panel, marked to redo the kit.
+3. Not a cause for text questions: the fillers record every question they see in
+   `answers`. Only upload fields (cover letter, other files) are notes-only, by design.
+
+## Next
+
+Read a job's questions before anyone opens the form, from the board's public API where it
+publishes them (Greenhouse returns them with `?questions=true`), so the kit answers them
+the first time.
 
 ## How to test
 
