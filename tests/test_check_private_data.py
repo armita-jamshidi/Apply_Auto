@@ -44,6 +44,18 @@ def test_private_files_are_blocked_but_examples_are_allowed() -> None:
     assert guard.private_paths(staged) == staged[:8]
 
 
+def test_workspace_personal_context_is_blocked_but_templates_are_allowed() -> None:
+    staged = [
+        "context/private/about-me.md",
+        "customers/candidate.md",
+        "context/product.md",
+        "customers/README.md",
+        "customers/candidate.example.md",
+    ]
+
+    assert guard.private_paths(staged) == staged[:2]
+
+
 def test_personal_values_cover_identity_links_employers_and_resume() -> None:
     values = guard.personal_values(PROFILE, "profile/resume_Example_2026.pdf")
 

@@ -35,8 +35,15 @@ PRIVATE_PATTERNS = (
     ".playwright/*",
     "playwright/.auth/*",
     "auth/*",
+    "context/private/*",
+    "customers/*",
 )
-ALLOWED_PATHS = frozenset({".env.example", "profile/profile.example.yaml"})
+ALLOWED_PATHS = frozenset({
+    ".env.example",
+    "profile/profile.example.yaml",
+    "customers/README.md",
+    "customers/candidate.example.md",
+})
 MIN_VALUE_LENGTH = 4
 
 
