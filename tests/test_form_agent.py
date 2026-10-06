@@ -255,10 +255,19 @@ def test_run_form_agent_reports_like_the_other_fillers(
         screenshot_path=tmp_path / "shot.png",
     )
 
-    assert result.answers == {"Name": "Sam Sample"}
+    # Every question on the form is reported, including the ones the agent skipped.
+    assert result.answers == {
+        "Name": "Sam Sample",
+        "Email address": None,
+        "Country": None,
+        "Will you require sponsorship?": None,
+        "Why do you want to work here? What draws you to this team?": None,
+    }
+    assert "not answered" in result.field_notes["Email address"]
+    assert "Options: Yes, No" in result.field_notes["Will you require sponsorship?"]
     assert result.field_notes["Agent summary"] == "Done."
     assert "attach it yourself" in result.field_notes["Resume"]
-    assert result.status == "dry_run_ready"
+    assert result.status == "manual_review"
     assert Path(result.screenshot_path).is_file()
 
 
@@ -452,3 +461,75 @@ def test_unlinked_questions_are_read_and_styled_checkboxes_get_checked(
     result = agent._tool_click(boxes[0]["id"], "Which AI tools have you used?")
     assert result["checked"] is True and page.is_checked("#openai")
     assert agent.run.answers["Which AI tools have you used?"]
+
+
+def test_questions_inside_an_iframe_are_read_and_filled(page, tmp_path: Path) -> None:
+    form = (
+        "<h2>Application</h2><label for='years'>Years of Python experience</label>"
+        "<input id='years'>"
+    )
+    page.set_content(f'<h1>Careers</h1><iframe srcdoc="{form}"></iframe>')
+    page.wait_for_function("document.querySelector('iframe').contentDocument.getElementById('years')")
+    agent = FormAgent(
+        page, profile={}, resume_path=tmp_path / "r.pdf", answerer=None, client=None, model="m"
+    )
+
+    controls = agent._tool_observe_page()["controls"]
+
+    field = next(item for item in controls if item.get("label") == "Years of Python experience")
+    assert field["id"].startswith("f1-")
+    agent._tool_fill_field(field["id"], "3", "Years of Python experience")
+    frame = page.frames[1]
+    assert frame.input_value("#years") == "3"
+
+
+def test_finish_is_sent_back_once_while_a_next_button_remains(page, tmp_path: Path) -> None:
+    page.set_content(TWO_PAGES)
+    model = ScriptedModel(
+        [
+            lambda ids: [call("observe_page", {}, 1)],
+            lambda ids: [call("finish", {"summary": "Done.", "left_for_candidate": []}, 2)],
+            lambda ids: [
+                call(
+                    "finish",
+                    {
+                        "summary": "Blocked by salary.",
+                        "left_for_candidate": [
+                            {"field": "Expected salary", "reason": "Yours to decide."}
+                        ],
+                    },
+                    3,
+                )
+            ],
+        ]
+    )
+    agent = FormAgent(
+        page, profile={}, resume_path=tmp_path / "r.pdf", answerer=None, client=model, model="m"
+    )
+
+    run = agent.start(JobListing("x", "x", "Acme", "AI Engineer", "https://acme.example", "", ""))
+
+    sent_back = next(r["content"] for r in model.results if r.get("is_error"))
+    assert "'Next' button" in sent_back
+    assert run.finished and run.summary == "Blocked by salary."
+    # Both page-one questions are documented, though the agent filled neither.
+    assert run.answers == {"Expected salary": None, "Full name": None}
+    assert "not answered" in run.notes["Full name"]
+    assert run.notes["Expected salary"] == "Yours to decide."
+
+
+def test_values_already_on_the_form_are_recorded_as_answers(page, tmp_path: Path) -> None:
+    page.set_content(
+        "<label for='city'>City</label><input id='city' value='Durham'>"
+        "<label for='src'>How did you hear about us?</label>"
+        "<select id='src'><option>Select...</option><option>LinkedIn</option></select>"
+    )
+    agent = FormAgent(
+        page, profile={}, resume_path=tmp_path / "r.pdf", answerer=None, client=None, model="m"
+    )
+
+    agent._tool_observe_page()
+    agent._record_unanswered()
+
+    assert agent.run.answers == {"City": "Durham", "How did you hear about us?": None}
+    assert "Options: LinkedIn." in agent.run.notes["How did you hear about us?"]

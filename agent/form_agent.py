@@ -14,6 +14,12 @@ Safety is enforced in code, not only in the prompt:
   person at the browser (or reported when nobody is there);
 - written drafts are typed in only when ``fill_drafts`` is set (hand-off, where the person
   reviews the form before submitting).
+
+Every question the agent sees is recorded, not only the ones it acts on: forms in iframes
+are read too, each observation adds its questions to a list, and at the end any question
+the agent did not answer is reported as left for the candidate. While a Next / Continue
+button is still on the page, the first call to finish is sent back so later pages are not
+skipped.
 """
 
 import argparse
@@ -43,8 +49,10 @@ from agent.types import JobListing
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MODEL = "claude-opus-5-5"
-MAX_STEPS = 80
-MAX_CONTROLS = 160
+MAX_STEPS = 150
+# When this many steps are left, the model is told to get through the remaining pages.
+STEPS_WARNING = 12
+MAX_CONTROLS = 250
 CLICK_TIMEOUT_MS = 8000
 # Whether what sits on top of a control's center belongs to the control's own widget (a
 # styled box over a hidden checkbox) rather than to something else (a cookie banner).
@@ -69,6 +77,19 @@ SUBMIT_TEXT = re.compile(
 )
 ACCOUNT_TEXT = re.compile(
     r"\b(?:create (?:an )?account|sign up|register|forgot password)\b", re.IGNORECASE
+)
+NEXT_TEXT = re.compile(
+    r"^\s*(?:next|continue|save (?:and|&) continue|next step|proceed)\b", re.IGNORECASE
+)
+# Frames that hold a CAPTCHA, never a form question.
+CHALLENGE_FRAME = re.compile(r"recaptcha|hcaptcha|challenges\.cloudflare|turnstile", re.I)
+# Values a dropdown shows before anything is chosen.
+PLACEHOLDER_VALUE = re.compile(
+    r"^\W*(?:select|choose|please select|pick|none|-+\s*none\s*-+)\b|^\W*$", re.IGNORECASE
+)
+QUESTION_ROLES = frozenset({"combobox", "textbox", "checkbox", "radio", "switch", "listbox"})
+NOT_QUESTION_TYPES = frozenset(
+    {"submit", "button", "reset", "image", "file", "password", "search", "hidden"}
 )
 # Lists the visible controls and tags each with an id the model can act on.
 SNAPSHOT_SCRIPT = (Path(__file__).with_name("form_agent_snapshot.js")).read_text(encoding="utf-8")
@@ -255,6 +276,8 @@ class FormAgentRun:
     finished: bool = False
     resume_uploaded: bool = False
     steps: int = 0
+    # Every question seen on the form: where it was and the value it last showed.
+    seen: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class FormAgent:
@@ -285,6 +308,11 @@ class FormAgent:
         self.max_steps = max_steps
         self.run = FormAgentRun()
         self._controls: dict[str, dict[str, Any]] = {}
+        self._frames: dict[str, Any] = {}  # control id -> the frame holding it
+        self._question_of: dict[str, str] = {}  # control id -> its question in run.seen
+        self._handled: set[str] = set()  # questions in run.seen the agent acted on
+        self._page_signature: tuple[str, ...] = ()
+        self._finish_warned: set[tuple[str, ...]] = set()
         self._use_fallback = use_fallback
 
     def start(self, job: JobListing) -> FormAgentRun:
@@ -326,9 +354,19 @@ class FormAgent:
                 if is_error:
                     block["is_error"] = True
                 results.append(block)
+            left = self.max_steps - self.run.steps
+            if not self.run.finished and 0 < left <= STEPS_WARNING:
+                results.append(
+                    {
+                        "type": "text",
+                        "text": f"Only {left} steps are left. Move on to any pages you have not "
+                        "seen yet, then call finish.",
+                    }
+                )
             messages.append({"role": "user", "content": results})
         if not self.run.finished and not self.run.summary:
             self.run.summary = f"Stopped after {self.run.steps} steps without finishing."
+        self._record_unanswered()
         return self.run
 
     def _create(self, messages: list[Any]) -> Any:
@@ -378,9 +416,97 @@ class FormAgent:
     # Tools -----------------------------------------------------------------------------
 
     def _tool_observe_page(self) -> dict[str, Any]:
-        snapshot = self.page.evaluate(SNAPSHOT_SCRIPT, [ID_ATTRIBUTE, MAX_CONTROLS])
+        snapshot: dict[str, Any] = {}
+        self._frames = {}
+        for index, frame in enumerate(self._readable_frames()):
+            remaining = MAX_CONTROLS - len(snapshot.get("controls", []))
+            if remaining <= 0:
+                break
+            prefix = "" if index == 0 else f"f{index}-"
+            try:
+                part = frame.evaluate(SNAPSHOT_SCRIPT, [ID_ATTRIBUTE, remaining, prefix])
+            except PlaywrightError:
+                continue  # a frame that navigated away or cannot be read
+            for item in part.get("controls", []):
+                self._frames[item["id"]] = frame
+            if not snapshot:
+                snapshot = part
+                continue
+            if part.get("controls"):
+                # A form embedded in an iframe (common on iCIMS and company career sites).
+                snapshot["controls"].extend(part["controls"])
+                snapshot["headings"].extend(part.get("headings", []))
+                snapshot["alerts"].extend(part.get("alerts", []))
+                snapshot.setdefault("frames", []).append(part.get("url"))
+            snapshot["omitted"] = snapshot.get("omitted", 0) + part.get("omitted", 0)
+        if not snapshot.get("omitted"):
+            snapshot.pop("omitted", None)
         self._controls = {item["id"]: item for item in snapshot.get("controls", [])}
+        self._record_questions(snapshot)
         return snapshot
+
+    def _readable_frames(self) -> list[Any]:
+        """The page's main frame, then its child frames other than CAPTCHA widgets."""
+        main = self.page.main_frame
+        children = [
+            frame
+            for frame in self.page.frames
+            if frame is not main
+            and not frame.is_detached()
+            and not CHALLENGE_FRAME.search(frame.url)
+        ]
+        return [main, *children]
+
+    def _record_questions(self, snapshot: Mapping[str, Any]) -> None:
+        """Add the observation's questions to run.seen with the value each one shows."""
+        self._page_signature = (
+            str(snapshot.get("url", "")),
+            *[str(heading) for heading in snapshot.get("headings", [])[:3]],
+        )
+        where = next(iter(snapshot.get("headings") or []), "") or str(snapshot.get("url", ""))
+        values: dict[str, list[str]] = {}
+        self._question_of = {}
+        for item in snapshot.get("controls", []):
+            question = _question_for(item)
+            if not question:
+                continue
+            self._question_of[item["id"]] = question
+            entry = self.run.seen.setdefault(question, {"page": where, "options": []})
+            entry["required"] = bool(entry.get("required") or item.get("required"))
+            found = values.setdefault(question, [])
+            if _is_choice(item):
+                option = _first_label(item.get("text") or item.get("label") or "")
+                if option and item.get("group") and option not in entry["options"]:
+                    entry["options"].append(option)
+                if item.get("checked") and option:
+                    found.append(option)
+            else:
+                if item.get("options"):
+                    entry["options"] = [
+                        option for option in item["options"] if not PLACEHOLDER_VALUE.match(option)
+                    ]
+                value = str(item.get("value") or "")
+                if not value and item.get("role") == "combobox":
+                    value = str(item.get("text") or "")
+                if value and not PLACEHOLDER_VALUE.match(value):
+                    found.append(value)
+        for question, found in values.items():
+            self.run.seen[question]["value"] = "; ".join(found) or None
+
+    def _record_unanswered(self) -> None:
+        """Report every question seen on the form that the agent did not answer."""
+        known = [*self.run.answers, *self.run.notes, *self.run.suggested_answers]
+        for question, entry in self.run.seen.items():
+            if question in self._handled or _matches_known(question, known):
+                continue
+            if entry.get("value"):
+                self.run.answers[question] = entry["value"]
+                continue
+            self.run.answers[question] = None
+            note = f"Seen on the form ({entry['page']}) but not answered; fill it in yourself."
+            if entry.get("options"):
+                note += f" Options: {', '.join(entry['options'][:12])}."
+            self.run.notes[question] = note
 
     def _tool_screenshot(self) -> list[dict[str, Any]]:
         image = self.page.screenshot(type="jpeg", quality=60, full_page=False)
@@ -409,6 +535,7 @@ class FormAgent:
             self.page.keyboard.press("Control+A")
             self.page.keyboard.type(value)
         self.run.answers[question] = value
+        self._mark_handled(control_id)
         return {"filled": question, "value": value}
 
     def _tool_choose_option(self, control_id: str, option: str, question: str) -> dict[str, Any]:
@@ -421,6 +548,7 @@ class FormAgent:
         except PlaywrightError:
             locator.select_option(value=option)
         self.run.answers[question] = option
+        self._mark_handled(control_id)
         return {"chosen": option, "for": question}
 
     def _tool_click(self, control_id: str, question: str | None = None) -> dict[str, Any]:
@@ -473,6 +601,7 @@ class FormAgent:
             if control.get("type") == "checkbox" and self.run.answers.get(question):
                 choice = f"{self.run.answers[question]}; {choice}"
             self.run.answers[question] = str(choice)
+            self._mark_handled(control_id)
         return result
 
     def _tool_type_and_list_options(self, control_id: str, text: str) -> dict[str, Any]:
@@ -541,6 +670,16 @@ class FormAgent:
         return {"candidate_done": done}
 
     def _tool_finish(self, summary: str, left_for_candidate: list[dict[str, str]]) -> dict:
+        next_button = self._next_button()
+        if next_button and self._page_signature not in self._finish_warned:
+            # Later pages often hold the most important questions; do not stop before them.
+            self._finish_warned.add(self._page_signature)
+            return {
+                "error": f"The page still has a {next_button!r} button, so the form may have "
+                "more pages. Click it and answer the next page. If required fields you must "
+                "leave for the candidate block it, use ask_human (or, if nobody is at the "
+                "browser, call finish again listing them)."
+            }
         self.run.summary = summary
         self.run.finished = True
         for item in left_for_candidate:
@@ -559,11 +698,37 @@ class FormAgent:
         return self._controls.get(str(control_id))
 
     def _locator(self, control_id: str) -> Any:
-        return self.page.locator(f'[{ID_ATTRIBUTE}="{control_id}"]').first
+        frame = self._frames.get(str(control_id)) or self.page.main_frame
+        return frame.locator(f'[{ID_ATTRIBUTE}="{control_id}"]').first
+
+    def _mark_handled(self, control_id: str) -> None:
+        question = self._question_of.get(str(control_id))
+        if question:
+            self._handled.add(question)
+
+    def _next_button(self) -> str | None:
+        """The text of an enabled Next / Continue button in the latest observation, if any."""
+        for control in self._controls.values():
+            words = str(control.get("text") or control.get("label") or "")
+            is_button = control.get("tag") in {"button", "a"} or control.get("role") == "button"
+            is_button = is_button or control.get("type") in {"submit", "button"}
+            if (
+                is_button
+                and not control.get("disabled")
+                and NEXT_TEXT.match(words)
+                and not SUBMIT_TEXT.search(words)
+            ):
+                return words.strip()
+        return None
 
     def _settle(self) -> None:
         try:
             self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except PlaywrightError:
+            pass
+        try:
+            # Single-page forms (Workday) load the next step's questions after the click.
+            self.page.wait_for_load_state("networkidle", timeout=2500)
         except PlaywrightError:
             pass
         self.page.wait_for_timeout(600)
@@ -669,6 +834,63 @@ def _same_question(name: str, known: list[str]) -> str | None:
         if score > best_score:
             best, best_score = question, score
     return best if best_score >= 0.6 else None
+
+
+def _is_choice(control: Mapping[str, Any]) -> bool:
+    return control.get("type") in {"checkbox", "radio"} or control.get("role") in {
+        "checkbox",
+        "radio",
+        "switch",
+    }
+
+
+def _first_label(label: str) -> str:
+    """A control's label without placeholder text, alternates, or a required marker."""
+    parts = [part.strip() for part in str(label).split(" | ")]
+    text = next((part for part in parts if part and not part.startswith("placeholder:")), "")
+    if not text and parts:
+        text = parts[0].removeprefix("placeholder:").strip()
+    return re.sub(r"\s*(?:\*|\(required\))\s*$", "", text, flags=re.IGNORECASE).strip()
+
+
+def _question_for(control: Mapping[str, Any]) -> str | None:
+    """The question a form control answers, or None for buttons, links, and unnamed controls.
+
+    A radio button or checkbox answers its group's question; a lone checkbox with a long
+    label (an acknowledgement) is its own question.
+    """
+    if control.get("type") in NOT_QUESTION_TYPES or control.get("disabled"):
+        return None
+    if control.get("tag") not in {"input", "textarea", "select"} and (
+        control.get("role") not in QUESTION_ROLES
+    ):
+        return None
+    if _is_choice(control):
+        question = _first_label(control.get("group") or "")
+        if not question:
+            label = _first_label(control.get("label") or control.get("text") or "")
+            question = label if len(label) >= 25 else ""
+        return question or None
+    return _first_label(control.get("label") or "") or None
+
+
+def _matches_known(question: str, known: list[str]) -> bool:
+    """Whether a seen question is one already recorded, possibly in shorter words.
+
+    Stricter than _same_question: a short known question ("Name") does not claim a longer
+    one ("Company name"); one text must hold the other and be most of it, or 4+ words of it.
+    """
+    wanted = " ".join(re.findall(r"[a-z0-9]+", question.casefold()))
+    for item in known:
+        other = " ".join(re.findall(r"[a-z0-9]+", item.casefold()))
+        if not wanted or not other:
+            continue
+        short, long = sorted((wanted, other), key=len)
+        if f" {short} " in f" {long} " and (
+            len(short) >= 0.6 * len(long) or len(short.split()) >= 4
+        ):
+            return True
+    return False
 
 
 def _question_words(text: str) -> set[str]:

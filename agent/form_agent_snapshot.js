@@ -1,6 +1,6 @@
 // Lists a page's visible form controls for the form agent, tagging each with an id.
-// Called with [attribute, limit]; see agent/form_agent.py.
-([attribute, limit]) => {
+// Called with [attribute, limit, prefix] in each frame; see agent/form_agent.py.
+([attribute, limit, prefix = '']) => {
   const visible = (el) => {
     // File inputs are often hidden behind a styled "Browse" button but still accept files.
     if (el.type === 'file') return true;
@@ -92,13 +92,25 @@
   // Ids restart at 1 on every read: clear the old ones, which stay on controls of earlier
   // pages that are hidden but still in the document, so an id names one control only.
   for (const old of document.querySelectorAll('[' + attribute + ']')) old.removeAttribute(attribute);
+  const candidates = Array.from(document.querySelectorAll(selector)).filter((el) =>
+    visible(el) &&
+    !(el.tagName === 'A' && !el.getAttribute('role') && !/apply|next|continue|back/i.test(text(el))));
+  // Over the limit, questions must not be cut for menus: drop page chrome first, then keep
+  // every field before other buttons, in page order.
+  let chosen = candidates;
+  if (chosen.length > limit) {
+    chosen = chosen.filter((el) => el.matches(FIELDS) ||
+      !el.closest('header, nav, footer, [role=navigation], [role=banner], [role=contentinfo]'));
+  }
+  if (chosen.length > limit) {
+    const keep = new Set(chosen.filter((el) => el.matches(FIELDS)).slice(0, limit));
+    for (const el of chosen) { if (keep.size >= limit) break; keep.add(el); }
+    chosen = chosen.filter((el) => keep.has(el));
+  }
   const controls = [];
   let next = 0;
-  for (const el of document.querySelectorAll(selector)) {
-    if (controls.length >= limit) break;
-    if (!visible(el)) continue;
-    if (el.tagName === 'A' && !el.getAttribute('role') && !/apply|next|continue|back/i.test(text(el))) continue;
-    const id = String(++next);
+  for (const el of chosen) {
+    const id = prefix + String(++next);
     el.setAttribute(attribute, id);
     const item = {
       id,
@@ -127,5 +139,8 @@
   const headings = Array.from(document.querySelectorAll('h1, h2, h3')).filter(visible).map(text).filter(Boolean).slice(0, 12);
   const alerts = Array.from(document.querySelectorAll('[role=alert], [aria-live=assertive], .error, [class*=error]'))
     .filter(visible).map(text).filter(Boolean).slice(0, 10);
-  return { url: location.href, title: document.title, headings, alerts, controls };
+  return {
+    url: location.href, title: document.title, headings, alerts, controls,
+    omitted: candidates.length - chosen.length,
+  };
 }
