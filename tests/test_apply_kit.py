@@ -10,16 +10,19 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from agent import apply_kit, dashboard
+from agent import apply_kit, dashboard, resume_tailor
 from agent.answer_agent import KitAnswer, answer_questions, questions_for_job
 from agent.answers import AnswerDecision
 from agent.library import LibraryDocument
 from agent.resume_tailor import (
     KEYWORD_PROMPT,
     POOL_PROMPT,
+    Entry,
     Keywords,
+    TailoredResume,
     bullet_problem,
     extract_keywords,
+    keyword_report,
     tailor_resume,
     write_docx,
 )
@@ -38,6 +41,15 @@ DESCRIPTION = (
     "<p>You will <b>evaluate</b> LLM agents and collaborate with researchers. "
     "Experience with Python, PyTorch, and Kubernetes. Build evaluation pipelines.</p>"
 )
+REAL_PAGE_COUNT = resume_tailor._page_count
+
+
+@pytest.fixture(autouse=True)
+def _estimated_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measure pages with the estimate, not LibreOffice, except where a test asks for it."""
+    monkeypatch.setattr(resume_tailor, "_page_count", lambda _path: None)
+
+
 JOB = {"company": "Acme", "title": "AI Engineer", "description": DESCRIPTION}
 
 
@@ -57,6 +69,8 @@ class FakeClient:
                 "action_verbs": ["Evaluate", "collaborate", "lead"],  # "lead" is not there
                 "technologies": ["python", "PyTorch", "Kubernetes"],
                 "concepts": ["evaluation pipelines"],
+                "required": ["Python", "PyTorch"],
+                "preferred": ["Kubernetes", "Rust"],  # Rust is not in the description
             }
         elif request["system"] == POOL_PROMPT:
             payload = {
@@ -111,6 +125,8 @@ def test_keywords_are_kept_only_as_the_description_spells_them() -> None:
     assert keywords.action_verbs == ["evaluate", "collaborate"]
     assert keywords.technologies == ["Python", "PyTorch", "Kubernetes"]
     assert keywords.concepts == ["evaluation pipelines"]
+    assert keywords.required == ["Python", "PyTorch"]
+    assert keywords.preferred == ["Kubernetes"]
 
 
 def test_bullets_naming_unsupported_tools_or_numbers_are_rejected() -> None:
@@ -161,7 +177,9 @@ def test_the_tailor_asks_about_missing_keywords_and_keeps_only_sourced_bullets(
     assert asked == ["Kubernetes", "evaluation pipelines"]
     assert resume.gaps == ["Kubernetes", "evaluation pipelines"]
     sections = dict(resume.sections)
-    lab, evaluator = sections["Experience"]
+    assert list(sections) == ["Experience", "Technical Projects"]  # grouped by kind
+    (lab,) = sections["Experience"]
+    (evaluator,) = sections["Technical Projects"]
     assert lab.bullets == [
         "Built a retrieval pipeline in Python that answered 120 questions a day."
     ]  # the Kubernetes claim failed twice, so the original wording stays
@@ -200,7 +218,7 @@ def test_an_answer_to_a_missing_keyword_becomes_evidence(tmp_path: Path) -> None
     )
 
     assert resume.gaps == ["evaluation pipelines"]
-    assert dict(resume.sections)["Projects"][0].bullets == [deployed["text"]]
+    assert dict(resume.sections)["Technical Projects"][0].bullets == [deployed["text"]]
     saved = (library / "keyword_answers.md").read_text(encoding="utf-8")
     assert "Kubernetes: deployed the evaluator" in saved
 
@@ -420,3 +438,89 @@ def test_a_failed_board_request_leaves_the_common_questions(
     monkeypatch.setattr("agent.fetchers.greenhouse.fetch_greenhouse_questions", fail)
 
     assert apply_kit.board_questions(_job_with_attempts(session)) == []
+
+
+def _long_resume(entries: int = 6, bullets: int = 4) -> TailoredResume:
+    filler = "and wrote it up for the team so others could reuse the approach later on"
+    sections = [
+        (
+            heading,
+            [
+                Entry(
+                    f"{heading[0]}{index}", f"{heading} {index}", "Example Org", "Remote",
+                    "2024 - 2025", "project" if heading == "Technical Projects" else "experience",
+                    bullets=[f"Built tool {index}.{n} in Go {filler}" for n in range(bullets)],
+                )
+                for index in range(entries)
+            ],
+        )
+        for heading in ("Experience", "Technical Projects")
+    ]
+    # One bullet uses a required qualification: it must survive the trimming.
+    sections[1][1][-1].bullets[-1] = f"Evaluated LLM agents in Python {filler}"
+    return TailoredResume(
+        "Jordan Example", ["jordan@example.com", "Raleigh, NC"],
+        ["Example State University, B.S. Computer Science, 2025"], sections,
+        [("Languages", ["Python", "Go"])],
+        Keywords(technologies=["Python", "Go"], required=["Python"]),
+    )
+
+
+def test_a_long_resume_is_trimmed_to_one_page_keeping_required_qualifications(
+    tmp_path: Path,
+) -> None:
+    resume = _long_resume()
+
+    write_docx(resume, tmp_path / "resume.docx")
+
+    assert resume_tailor._fits(resume, resume_tailor.MIN_FONT_SIZE)
+    kept = [bullet for _title, entries in resume.sections for e in entries for bullet in e.bullets]
+    assert any("Evaluated LLM agents in Python" in bullet for bullet in kept)
+    assert len(kept) < 48
+    assert resume.notes[-1].startswith("To fit one page:")
+
+
+def test_the_resume_uses_times_new_roman_at_10pt_or_more_in_four_sections(
+    tmp_path: Path,
+) -> None:
+    from docx import Document
+
+    short = _long_resume(entries=1, bullets=2)
+
+    out = write_docx(short, tmp_path / "resume.docx")
+
+    document = Document(str(out))
+    runs = [run for paragraph in document.paragraphs for run in paragraph.runs if run.text]
+    assert {run.font.name for run in runs} == {"Times New Roman"}
+    assert min(run.font.size.pt for run in runs) >= 10
+    assert max(run.font.size.pt for run in runs if not run.bold) == 11  # roomy: largest size
+    headings = [p.text for p in document.paragraphs if p.text.isupper()]
+    assert headings == ["EDUCATION", "EXPERIENCE", "TECHNICAL PROJECTS", "SKILLS"]
+    assert not short.notes  # nothing was trimmed
+
+
+@pytest.mark.skipif(
+    not __import__("shutil").which("soffice"),
+    reason="LibreOffice is not installed",
+)
+def test_the_word_file_really_is_one_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(resume_tailor, "_page_count", REAL_PAGE_COUNT)
+    resume = _long_resume()
+
+    out = write_docx(resume, tmp_path / "resume.docx")
+
+    assert REAL_PAGE_COUNT(out) == 1
+    assert any("Evaluated LLM agents in Python" in b for _t, es in resume.sections
+               for e in es for b in e.bullets)
+
+
+def test_the_keyword_report_counts_required_and_preferred_matches() -> None:
+    resume = _long_resume(entries=1, bullets=1)
+    resume.keywords = Keywords(required=["Python", "Rust"], preferred=["Go"])
+
+    report = keyword_report(resume)
+
+    assert "Required qualifications matched: 1 of 2 (missing: Rust)" in report
+    assert "Preferred qualifications matched: 1 of 1" in report
