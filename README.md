@@ -113,7 +113,4 @@ For Claude Code, [.claude/skills/](.claude/skills/) has three skills (`apply-kit
 
 ## Roadmap
 
-Phases 1–12 are done (Oct 1–6, 2026). They cover discovery, fit scoring, board fillers, live safeguards, hand-off and assist modes, the dashboard, targeted discovery, the form agent, the source library, the careers agent, fresh postings first, and the apply kit (tailored resume and answers). Two phases are planned:
-
-- LinkedIn alert email parsing
-- Daily scheduling
+Phases 1–12 are done (Oct 1–6, 2026). They cover discovery, fit scoring, board fillers, live safeguards, hand-off and assist modes, the dashboard, targeted discovery, the form agent, the source library, the careers agent, fresh postings first, and the apply kit (tailored resume and answers). The current plan is in [ROADMAP.md](ROADMAP.md).

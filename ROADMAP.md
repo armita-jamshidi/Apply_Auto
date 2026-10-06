@@ -10,15 +10,19 @@ Move an item to Done when its PR is merged.
 
 ## Next
 
-2. **Daily scheduling.** Run discovery, scoring, and kit preparation once a day on the
+2. **Show RTP or Remote on each job.** A clear label on every dashboard row saying whether
+   the role is in the Research Triangle area or US-remote, so it is visible at a glance.
+3. **Daily scheduling.** Run discovery, scoring, and kit preparation once a day on the
    candidate's machine, so fresh jobs are ready each morning.
-3. **LinkedIn job-alert emails.** Read the candidate's LinkedIn alert emails (not the site)
-   as another job source.
 
 ## Later
 
 - Better Research Triangle coverage (Raleigh, Durham, Chapel Hill, Cary, RTP employers).
-- Show on the dashboard why each job got its fit score.
+
+## Not planned
+
+- LinkedIn job-alert emails, and explaining each job's fit score on the dashboard: the
+  candidate does not want them (Oct 6, 2026).
 
 ## Done
 
