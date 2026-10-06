@@ -101,6 +101,16 @@ discovery:
     - researcher
     - research engineer
     - architect
+# The morning run (job-daily): find, score, and prepare new jobs so each good match has a
+# tailored resume and every answer waiting in the dashboard by ready_by. Register it with
+# `job-daily --install`; it starts start_hours_before hours earlier.
+daily_run:
+  ready_by: "09:00"
+  timezone: America/New_York
+  start_hours_before: 2
+  # Build the kit (tailored resume and answers) for at most this many new jobs each morning,
+  # best and freshest first. Each kit makes several model calls.
+  kit_limit: 10
 safeguards:
   daily_application_cap: 5
   company_monthly_application_cap: 5

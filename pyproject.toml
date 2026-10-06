@@ -31,6 +31,7 @@ job-run = "agent.pipeline:main"
 job-agent-fill = "agent.form_agent:main"
 job-company-pages = "agent.careers_agent:main"
 job-kit = "agent.apply_kit:main"
+job-daily = "agent.daily:main"
 
 [project.optional-dependencies]
 dev = [

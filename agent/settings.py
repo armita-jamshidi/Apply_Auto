@@ -66,6 +66,10 @@ class AgentSettings:
     fresh_posting_days: int = 7
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
+    daily_ready_by: str = "09:00"
+    daily_timezone: str = "America/New_York"
+    daily_start_hours_before: float = 2.0
+    daily_kit_limit: int = 10
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -96,6 +100,13 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
     if daily_application_cap < 1 or company_monthly_application_cap < 1:
         raise ValueError("application caps must be at least 1")
     discovery = raw.get("discovery", {}) or {}
+    daily = raw.get("daily_run", {}) or {}
+    daily_ready_by = str(daily.get("ready_by", "09:00")).strip()
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", daily_ready_by):
+        raise ValueError("daily_run.ready_by must be a 24-hour time such as 09:00")
+    daily_kit_limit = int(daily.get("kit_limit", 10))
+    if daily_kit_limit < 0:
+        raise ValueError("daily_run.kit_limit must be 0 or more")
     experience_levels = tuple(
         str(level).strip().lower()
         for level in discovery.get("experience_levels", ["early", "unknown"])
@@ -147,6 +158,10 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         exclude_description_phrases=_keywords(
             discovery.get("exclude_description_phrases"), DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
         ),
+        daily_ready_by=daily_ready_by,
+        daily_timezone=str(daily.get("timezone") or "America/New_York"),
+        daily_start_hours_before=float(daily.get("start_hours_before", 2)),
+        daily_kit_limit=daily_kit_limit,
     )
 
 
