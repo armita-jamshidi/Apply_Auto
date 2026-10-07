@@ -290,3 +290,128 @@ def test_the_word_file_copies_the_formats_look(tmp_path: Path) -> None:
 def test_body_sizes_start_at_the_formats_and_never_go_below_10() -> None:
     assert resume_tailor.font_sizes(ResumeFormat(body_size=11.5)) == [11.5, 11, 10.5, 10]
     assert resume_tailor.font_sizes(ResumeFormat(body_size=10)) == [10]
+
+
+INTERNSHIP = Entry(
+    "e1", "Software Intern", "Example Co", kind="experience", doc_id="master_cv",
+    facts=["Built a search service in Python used by the support team every day."],
+)
+CLUB = Entry(
+    "e2", "Hack Club Lead", kind="leadership", doc_id="master_cv",
+    facts=["Organized a hackathon for 200 students."],
+)
+DOCS = [resume_tailor.LibraryDocument("master_cv", "Master CV", MASTER_CV)]
+
+
+class SuggestingClient:
+    """Answers the suggestion request, then the keyword, pool, and tailor requests."""
+
+    def __init__(self, suggestions: list[dict], tailor: dict | None = None) -> None:
+        self.suggestions = suggestions
+        self.tailor = tailor or {"sections": [], "skills": []}
+        self.messages = SimpleNamespace(create=self.create)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+    def create(self, **request):
+        system = request["system"]
+        if system == KEYWORD_PROMPT:
+            payload = {"action_verbs": ["Deploy"], "technologies": ["Docker", "Kubernetes"],
+                       "concepts": [], "required": ["Docker"], "preferred": []}
+        elif system == POOL_PROMPT:
+            payload = {"name": "Jordan Example", "contact": [], "education": [], "entries": [
+                {"title": "Software Intern", "organization": "Example Co", "location": "",
+                 "dates": "", "kind": "experience", "doc_id": "master_cv",
+                 "facts": INTERNSHIP.facts}]}
+        elif system == resume_tailor.SUGGEST_PROMPT:
+            payload = {"suggestions": self.suggestions}
+        else:
+            payload = self.tailor
+        return SimpleNamespace(
+            stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(payload))]
+        )
+
+
+DOCKER = {
+    "keyword": "docker", "entry_id": "e1",
+    "text": "Deployed the Python search service in Docker containers for the support team",
+    "basis": "Built a search service in Python used by the support team every day.",
+}
+
+
+def test_suggested_bullets_fit_an_entry_and_add_nothing_but_the_keyword() -> None:
+    pool = {"e1": INTERNSHIP, "e2": CLUB}
+    suggestions = [
+        DOCKER,
+        {**DOCKER, "keyword": "Kubernetes", "text": "Ran it on Kubernetes for 5000 users"},
+        {**DOCKER, "keyword": "Terraform", "text": "Managed infrastructure"},  # no keyword
+        {**DOCKER, "keyword": "AWS", "text": "Hosted it on AWS", "basis": "Ran a startup"},
+        {**DOCKER, "keyword": "Go", "entry_id": "e9", "text": "Rewrote it in Go"},
+    ]
+    client = SuggestingClient(suggestions)
+
+    kept = resume_tailor.suggest_bullets(
+        ["Docker", "Kubernetes", "Terraform", "AWS", "Go"], Keywords(), pool, DOCS,
+        client=client, model="m",
+    )
+
+    assert list(kept) == ["Docker"]  # the job's spelling
+    assert kept["Docker"].entry == "Software Intern, Example Co"
+    assert kept["Docker"].text == DOCKER["text"]
+
+
+def test_a_confirmed_suggestion_becomes_evidence_and_others_are_listed(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    job = {**JOB, "description": "Deploy services with Docker and Kubernetes in Python."}
+    uses_docker = {"sections": [{"heading": "Experience", "entries": [{
+        "entry_id": "e1", "bullets": [{"text": DOCKER["text"], "evidence": [
+            {"doc_id": "keyword_answers.md", "quote": DOCKER["text"]}]}]}]}], "skills": []}
+    kubernetes = {**DOCKER, "keyword": "Kubernetes",
+                  "text": "Deployed the search service on Kubernetes"}
+    asked: list[tuple[str, str | None]] = []
+
+    def confirm(keyword: str, suggestion) -> str | None:
+        asked.append((keyword, suggestion.text if suggestion else None))
+        return suggestion.text if keyword == "Docker" else None
+
+    resume = tailor_resume(
+        job, RESUME, client=SuggestingClient([DOCKER, kubernetes], uses_docker), model="m",
+        library_dir=library, ask=confirm, master_cv_text=MASTER_CV,
+    )
+
+    assert asked == [("Docker", DOCKER["text"]), ("Kubernetes", kubernetes["text"])]
+    saved = (library / "keyword_answers.md").read_text(encoding="utf-8")
+    assert f"## Docker (Software Intern, Example Co)\nDocker: {DOCKER['text']}" in saved
+    assert resume.gaps == ["Kubernetes"]
+    assert dict(resume.sections)["Experience"][0].bullets == [DOCKER["text"]]
+    assert [item.keyword for item in resume.suggestions] == ["Kubernetes"]
+    report = resume_tailor.keyword_report(resume)
+    assert "## Suggested bullets for missing keywords" in report
+    assert f"- Kubernetes, for Software Intern, Example Co: {kubernetes['text']}" in report
+
+
+def test_without_anyone_to_ask_suggestions_stay_off_the_resume(tmp_path: Path) -> None:
+    job = {**JOB, "description": "Deploy services with Docker in Python."}
+
+    resume = tailor_resume(
+        job, RESUME, client=SuggestingClient([DOCKER]), model="m",
+        library_dir=tmp_path / "library", master_cv_text=MASTER_CV,
+    )
+
+    assert resume.gaps == ["Docker"]  # Kubernetes is not in this description
+    assert [item.text for item in resume.suggestions] == [DOCKER["text"]]
+    assert DOCKER["text"] not in resume.text()
+    assert not (tmp_path / "library" / "keyword_answers.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [("y", DOCKER["text"]), ("Containerized it with Docker", "Containerized it with Docker"),
+     ("", None)],
+)
+def test_the_console_offers_the_suggested_bullet(monkeypatch, typed, expected) -> None:
+    from agent.apply_kit import ask_in_console
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: typed)
+    suggestion = resume_tailor.Suggestion("Docker", "Software Intern, Example Co", DOCKER["text"])
+
+    assert ask_in_console("Docker", suggestion) == expected

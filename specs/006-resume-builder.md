@@ -24,6 +24,16 @@ and the library folder, and always used Times New Roman with fixed section headi
 - **Fallbacks.** No master CV: the resume and library are the sources, as before. No format
   example, or one with no Experience or Projects heading: the default format. Each fallback
   is noted in the kit's keyword report.
+- **Missing keywords.** When a keyword from the job is in none of the sources, the
+  suggestion agent writes one bullet that uses it, for the pool entry where it fits best
+  (an internship, job, or project), built on a fact of that entry. Code keeps a suggestion
+  only when it uses the keyword as the job spells it, names an entry in the pool, quotes a
+  real fact of that entry, and adds no number. In `job-kit`, each suggestion is shown in
+  the console: `y` keeps it, typed text replaces it, Enter skips it. A kept bullet is saved
+  to `profile/library/keyword_answers.md` (with the entry's name) and then counts as
+  evidence, so the tailor can put it on the resume. When nobody is at the console (the
+  morning run), suggestions stay off the resume and are listed in the kit's keyword report,
+  shown in the Apply panel, for the candidate to check.
 - One page, never below 10 pt, as before: body sizes start at the format's own and go down
   half a point at a time.
 - Both files stay private: `profile/*.pdf`, `profile/*.docx`, and `profile/master_cv*` are
@@ -39,9 +49,12 @@ flowchart TD
     LIB[profile/library/] --> SRC
     KW --> ASK{Keyword in any source?}
     SRC --> ASK
-    ASK -- no --> Q[Ask the candidate or report a gap]
-    Q --> LIB
     ASK -- yes --> POOL[Pool agent: every role, once, master CV first]
+    POOL --> SUG[Suggestion agent: a bullet using each missing keyword, on the entry it fits best]
+    ASK -- no --> SUG
+    SUG --> OK{You confirm it is true?}
+    OK -- yes or edited --> LIB
+    OK -- no one to ask --> REP[Listed in the keyword report, not on the resume]
     POOL --> PICK[Tailor agent: best entries for this job, bullets in the job's words, each with quotes]
     FMT[Format reader: font, sizes, headings in order] --> PICK
     R1 --> FMT
@@ -61,6 +74,9 @@ Offline tests in `tests/test_resume_builder.py` with fictional PDFs written by t
 - a missing master CV or an unreadable format example falls back with a note;
 - the master CV is sent first to the pool agent, the tailor is told the format's headings,
   entries land under them, and a role in both files appears once;
-- the Word file uses the format's font, sizes, and heading order.
+- the Word file uses the format's font, sizes, and heading order;
+- suggestions are kept only on a real entry, with the keyword, a real basis, and no new
+  number; a confirmed one is saved and used on the resume, an unconfirmed one is listed in
+  the report and kept off the resume; the console's y, edit, and skip.
 
 `tests/test_check_private_data.py` covers the new private paths.

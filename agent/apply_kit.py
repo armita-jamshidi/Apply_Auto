@@ -33,7 +33,7 @@ KITS_DIR = PROJECT_ROOT / "kits"
 KIT_MODE = "kit"
 # Kit note saying the form's questions were read from the job board's API.
 BOARD_QUESTIONS_NOTE = "Form questions"
-Ask = Callable[[str], str | None]
+Ask = Callable[[str, Any], str | None]  # see agent.resume_tailor.Ask
 
 
 @dataclass
@@ -221,17 +221,26 @@ def questions_missing_from_kit(job: Job, kit: Application) -> list[tuple[str, st
     return missing
 
 
-def ask_in_console(keyword: str) -> str | None:
-    """Ask how the candidate used a keyword their documents never mention."""
-    print(
-        f"\nThe job asks for {keyword!r}, and your resume and experience bank never mention it."
-    )
+def ask_in_console(keyword: str, suggestion: Any = None) -> str | None:
+    """Ask about a keyword the candidate's documents never mention, with a suggested bullet.
+
+    "y" keeps the suggested bullet, any other text replaces it, and Enter skips the keyword.
+    """
+    print(f"\nThe job asks for {keyword!r}, and your documents never mention it.")
     try:
+        if suggestion is None:
+            answer = input(
+                "  How have you used it, and on which project or job? (Enter to skip): "
+            ).strip()
+            return answer or None
+        print(f"  Suggested bullet for {suggestion.entry}:\n    {suggestion.text}")
         answer = input(
-            "  How have you used it, and on which project or job? (Enter to skip): "
+            "  Is it true? Type y to use it, type your own version, or press Enter to skip: "
         ).strip()
     except EOFError:
         return None
+    if answer.casefold() in {"y", "yes"}:
+        return suggestion.text
     return answer or None
 
 

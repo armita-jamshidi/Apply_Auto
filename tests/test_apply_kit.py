@@ -96,6 +96,8 @@ class FakeClient:
                     },
                 ],
             }
+        elif request["system"] == resume_tailor.SUGGEST_PROMPT:
+            payload = {"suggestions": []}
         else:
             payload = self.tailor_replies.pop(0)
         return SimpleNamespace(
@@ -169,7 +171,7 @@ def test_the_tailor_asks_about_missing_keywords_and_keeps_only_sourced_bullets(
 
     resume = tailor_resume(
         JOB, RESUME, client=client, model="m", library_dir=library,
-        ask=lambda keyword: asked.append(keyword) or None,
+        ask=lambda keyword, _suggestion: asked.append(keyword) or None,
     )
 
     # Python and PyTorch are in the documents; the bank says "evaluation harness", not
@@ -212,7 +214,7 @@ def test_an_answer_to_a_missing_keyword_becomes_evidence(tmp_path: Path) -> None
 
     resume = tailor_resume(
         JOB, RESUME, client=FakeClient([draft]), model="m", library_dir=library,
-        ask=lambda keyword: (
+        ask=lambda keyword, _suggestion: (
             "deployed the evaluator on a Kubernetes cluster" if keyword == "Kubernetes" else None
         ),
     )

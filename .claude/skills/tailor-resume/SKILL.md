@@ -16,9 +16,10 @@ Use the project command; do not write the resume yourself or read the private so
    - Output: `kits/job-<id>/resume-<company>-<title>-<date>.docx` and `keywords.md`.
    - Every bullet is checked against exact quotes from those sources; a bullet naming a tool
      or number the sources do not support is dropped and the original wording kept.
-3. Keywords under "No evidence in your documents": ask the user how they used each one, append
-   `## <keyword>\n<keyword>: <their answer>` to `profile/library/keyword_answers.md`, and rerun
-   step 2. Do not invent experience.
+3. Keywords under "No evidence in your documents": `keywords.md` lists a suggested bullet for
+   each, on the entry where it fits best. Show them to the user; for each one they confirm
+   (or reword), append `## <keyword> (<entry>)\n<keyword>: <bullet>` to
+   `profile/library/keyword_answers.md`, and rerun step 2. Never use an unconfirmed one.
 4. Report the .docx path and the used / not-used keyword lists.
 
 The model is `resume_tailor_model` in `config/settings.yaml` (default `claude-opus-5-5`).
