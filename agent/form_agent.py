@@ -24,6 +24,7 @@ skipped.
 
 import argparse
 import base64
+import html
 import json
 import logging
 import os
@@ -766,7 +767,24 @@ def run_form_agent(
             long_form=long_form,
         )
 
-    page.goto(job.url, wait_until="domcontentloaded")
+    try:
+        page.goto(job.url, wait_until="domcontentloaded")
+    except PlaywrightError as error_:
+        # A site that blocks automated browsers, or no network: say so in the window too.
+        reason = str(error_).splitlines()[0]
+        show_message(
+            page,
+            "The application page did not open",
+            f"{reason}. Open it yourself: {job.url}",
+        )
+        return ApplierResult(
+            "manual_review",
+            {},
+            None,
+            None,
+            f"Could not open the application page ({reason}).",
+            job_description=job.description,
+        )
     page.wait_for_timeout(1500)
     agent = FormAgent(
         page,
@@ -943,7 +961,52 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def working_page(browser: Any) -> Page:
+    """The tab the agent works in, brought to the front.
+
+    Chrome may restore earlier tabs in its profile; reuse the empty start tab when there is
+    one, else open a new tab, so the agent never works in a tab you are not looking at.
+    """
+    blank = [page for page in browser.pages if page.url in ("", "about:blank")]
+    page = blank[0] if blank else browser.new_page()
+    page.bring_to_front()
+    return page
+
+
+def show_message(page: Page, heading: str, text: str) -> None:
+    """Show a short message in the browser window, so it never sits blank."""
+    try:
+        page.set_content(
+            "<body style='font:16px system-ui,sans-serif;margin:3rem;max-width:40rem'>"
+            f"<h1 style='font-size:1.4rem'>{html.escape(heading)}</h1>"
+            f"<p>{html.escape(text)}</p></body>"
+        )
+    except PlaywrightError:
+        pass  # the window was closed
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Run the form agent; on any failure, show why and wait, so the window does not vanish.
+
+    The dashboard starts this in its own console window, which closes as soon as the
+    program ends, so an error would otherwise disappear before you could read it.
+    """
+    headless = "--headless" in (sys.argv[1:] if argv is None else argv)
+    try:
+        return _main(argv)
+    except SystemExit as stop:
+        if isinstance(stop.code, str) and not headless:
+            print(f"\n{stop.code}")
+            _pause("Press Enter to close this window... ")
+        raise
+    except Exception:
+        LOGGER.exception("The form agent stopped")
+        if not headless:
+            _pause("The agent stopped with the error above. Press Enter to close this window... ")
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     """Open the form in the hand-off browser, let the agent fill it, and leave it open."""
     from playwright.sync_api import sync_playwright
 
@@ -995,7 +1058,12 @@ def main(argv: list[str] | None = None) -> int:
             page = browser.new_page()
         else:
             browser = launch_hand_off_browser(playwright, "chrome", None)
-            page = browser.pages[0] if browser.pages else browser.new_page()
+            page = working_page(browser)
+            show_message(
+                page,
+                f"Opening {job.company} - {job.title}",
+                "The agent is loading the application. Keep this window open.",
+            )
         try:
             result = run_form_agent(
                 page,
