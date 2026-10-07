@@ -36,7 +36,7 @@ from agent.fetchers.greenhouse import greenhouse_job_id, names_role
 from agent.postings import CLOSED
 from agent.settings import PROJECT_ROOT, load_settings
 from agent.sources.company_apply import _is_aggregator, is_careers_listing
-from agent.tracking import REMOVED, mark_job
+from agent.tracking import OPEN_STATUSES, REMOVED, best_jobs_per_company, mark_job
 from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Application, Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
@@ -80,10 +80,14 @@ class DashboardRow:
     applied_at: datetime | None
 
 
-def dashboard_rows(session: Session, *, fresh_days: int = 7) -> list[DashboardRow]:
+def dashboard_rows(
+    session: Session, *, fresh_days: int = 7, max_per_company: int | None = None
+) -> list[DashboardRow]:
     """Return every job, grouped and ordered: what needs you first, then new by fit.
 
     Within each group, postings at most fresh_days old come first, so you can apply early.
+    Open jobs are limited to the best max_per_company at each company; applied and skipped
+    jobs are always shown.
     """
     fresh_since = datetime.now(UTC) - timedelta(days=fresh_days)
     jobs = session.scalars(
@@ -91,6 +95,10 @@ def dashboard_rows(session: Session, *, fresh_days: int = 7) -> list[DashboardRo
         .options(selectinload(Job.applications))
         .where(Job.status.not_in((REMOVED, CLOSED)))
     ).all()
+    shown, _extra = best_jobs_per_company(
+        [job for job in jobs if job.status in OPEN_STATUSES], max_per_company
+    )
+    jobs = [job for job in jobs if job.status not in OPEN_STATUSES] + shown
     rows: list[DashboardRow] = []
     for job in jobs:
         group, label = next(
@@ -130,12 +138,13 @@ def write_dashboard(
 ) -> list[DashboardRow]:
     """Write the dashboard page and return its rows."""
     path = path or DASHBOARD_PATH
-    if fit_threshold is None or fresh_days is None:
-        settings = load_settings()
-        fit_threshold = settings.fit_score_threshold if fit_threshold is None else fit_threshold
-        fresh_days = settings.fresh_posting_days if fresh_days is None else fresh_days
+    settings = load_settings()
+    fit_threshold = settings.fit_score_threshold if fit_threshold is None else fit_threshold
+    fresh_days = settings.fresh_posting_days if fresh_days is None else fresh_days
     fresh_since = datetime.now(UTC) - timedelta(days=fresh_days)
-    rows = dashboard_rows(session, fresh_days=fresh_days)
+    rows = dashboard_rows(
+        session, fresh_days=fresh_days, max_per_company=settings.max_jobs_per_company
+    )
     fresh_count = sum(
         _is_fresh(row.job.posted_at, fresh_since) and row.group not in {"applied", "skipped"}
         for row in rows

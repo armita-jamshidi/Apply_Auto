@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import FitSummary
+from agent.filters import company_key
 from agent.types import JobListing
 from db.models import Application, Job, utc_now
 
@@ -14,6 +15,34 @@ READY_FOR_YOU = "manual_review"
 # Removed jobs stay in the database (hidden) so discovery does not add them back.
 REMOVED = "removed"
 MARKABLE_STATUSES = frozenset({"new", "queued", READY_FOR_YOU, "applied", "skipped", REMOVED})
+# Jobs still waiting on you; only these count toward the per-company limit.
+OPEN_STATUSES = ("new", "queued", READY_FOR_YOU)
+
+
+def best_jobs_per_company(jobs: list[Job], limit: int | None) -> tuple[list[Job], list[Job]]:
+    """Split open jobs into the best `limit` at each company and the rest.
+
+    Prepared jobs come first, then the highest fit scores, then the newest. Company names
+    match without case or suffixes ("Acme, Inc." is "Acme"). No limit keeps every job.
+    """
+    if not limit:
+        return list(jobs), []
+    by_company: dict[str, list[Job]] = {}
+    for job in jobs:
+        by_company.setdefault(company_key(job.company), []).append(job)
+    kept: list[Job] = []
+    extra: list[Job] = []
+    for group in by_company.values():
+        group.sort(
+            key=lambda job: (
+                job.status != READY_FOR_YOU,
+                -(job.fit_score if job.fit_score is not None else -1),
+                -(job.id or 0),
+            )
+        )
+        kept.extend(group[:limit])
+        extra.extend(group[limit:])
+    return kept, extra
 
 
 def qualification_problem(fit: FitSummary) -> str | None:

@@ -158,7 +158,7 @@ def test_himalayas_without_a_mapped_level_searches_once_unfiltered() -> None:
     assert seen == [{"q": "ai engineer", "country": "United States"}]
 
 
-def test_cap_keeps_the_best_two_jobs_per_company() -> None:
+def test_cap_keeps_the_best_three_jobs_per_company() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     settings = load_settings()
@@ -175,18 +175,19 @@ def test_cap_keeps_the_best_two_jobs_per_company() -> None:
 
         ready = add("ready", 50, status="manual_review")
         best = add("best", 90)
+        good = add("good", 80)
         low = add("low", 60)
         unscored = add("unscored", None)
         applied = add("applied", 99, status="applied")
         other = add("other", 10, company="Other Co")
 
-        assert settings.max_jobs_per_company == 2
+        assert settings.max_jobs_per_company == 3
         assert pipeline.cap_jobs_per_company(session, settings) == 2
 
-        assert (ready.status, best.status) == ("manual_review", "new")
+        assert (ready.status, best.status, good.status) == ("manual_review", "new", "new")
         assert low.status == unscored.status == "removed"
         assert applied.status == "applied" and other.status == "new"
-        assert "Kept the 2 most relevant roles at Acme" in low.dealbreakers
+        assert "Kept the 3 most relevant roles at Acme" in low.dealbreakers
     engine.dispose()
 
 

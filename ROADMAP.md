@@ -5,6 +5,9 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **At most three roles per company.** Keep only the top three open matches for each
+  company, in the pipeline and on the dashboard.
+  Spec: [specs/007-roles-per-company.md](specs/007-roles-per-company.md).
 0. **Resume builder from a master CV.** Pick and reword each resume's entries from the
    master CV, and copy the look of the candidate's own one-page resume.
    Spec: [specs/006-resume-builder.md](specs/006-resume-builder.md).
