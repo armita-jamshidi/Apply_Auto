@@ -26,17 +26,12 @@ class CompanyConfig:
     url: str | None
 
 
-# Roles the candidate does not qualify for: internships, co-ops, and new-grad programs.
+# Roles the candidate does not want: internships and co-ops. New-grad roles are kept: the
+# candidate is a recent graduate (December 2025), so those roles are open to them.
 DEFAULT_EXCLUDED_TITLES = (
     "intern", "interns", "internship", "internships", "co-op", "co-ops", "coop", "co op",
-    "new grad", "new grads", "new-grad", "new graduate", "new graduates", "recent grad",
-    "recent graduate", "university grad", "university graduate", "college grad", "college grads",
-    "college graduate", "college graduates",
 )
-DEFAULT_EXCLUDED_DESCRIPTION_PHRASES = (
-    "new grad", "new grads", "new-grad", "new graduate", "new graduates",
-    "new college grad", "new college graduate",
-)
+DEFAULT_EXCLUDED_DESCRIPTION_PHRASES: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,16 +185,16 @@ def stale_posting_reason(posted_at: datetime | None, settings: AgentSettings) ->
 
 
 def excluded_role_reason(title: str, description: str, settings: AgentSettings) -> str | None:
-    """Why a role is one the candidate has ruled out (intern, co-op, new grad), else None."""
+    """Why a role is ruled out (intern, co-op, or more years than max_years_experience)."""
     if settings.exclude_title_keywords and title_matches(
         title, settings.exclude_title_keywords
     ):
-        return "Internship, co-op, or new-grad role (excluded in settings)"
+        return "Internship or co-op (excluded in settings)"
     text = " ".join(re.sub(r"<[^>]+>", " ", description).split())
     if settings.exclude_description_phrases and title_matches(
         text, settings.exclude_description_phrases
     ):
-        return "Posting is for new graduates (excluded in settings)"
+        return "Posting has an excluded phrase (see settings)"
     limit = settings.max_years_experience
     if limit is not None:
         experience = classify_experience(title, description)

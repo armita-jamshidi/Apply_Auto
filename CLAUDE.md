@@ -7,6 +7,10 @@ posting's exact wording, and answers every application question in the candidate
 The local dashboard lists each job with its fit score and a link to the role on the
 company's site, and shows every answer in its Apply sidebar.
 
+Only roles open to a recent graduate (December 2025) or someone with 1 to 2 years of
+experience are kept: a role that requires 3 or more years is filtered out before it reaches
+the dashboard (`max_years_experience: 2`). Internships and co-ops are filtered out too.
+
 The buyer and only user is the candidate. The promise is convenience: less time tailoring
 resumes, answering questions, and searching.
 

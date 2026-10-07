@@ -10,7 +10,7 @@ Job Agent is a privacy-conscious job search assistant. It finds AI and agent eng
 
 ## Highlights
 
-- **Discovery across many sources.** It reads Greenhouse, Lever, Ashby, and SmartRecruiters boards through their public APIs, plus We Work Remotely, Hacker News "Who is hiring?", and Himalayas. Companies are also found automatically from the SimplifyJobs list. Rule-based filters keep only roles that match on title, seniority, years required, location, and posting age, and duplicates are removed.
+- **Discovery across many sources.** It reads Greenhouse, Lever, Ashby, and SmartRecruiters boards through their public APIs, plus We Work Remotely, Hacker News "Who is hiring?", and Himalayas. Companies are also found automatically from the SimplifyJobs list. Rule-based filters keep only roles that match on title, seniority, years required (roles open to recent graduates or needing at most 2 years), location, and posting age, and duplicates are removed. Jobs already found are checked again on every run, after the company's own page fills in the full description.
 - **Three Claude agents, each checked in code:**
   - The **careers agent** finds a third-party job on the company's own site and links to that role's page or application form. It never links to the general careers page. The title must appear on a page the agent actually opened.
   - The **form agent** fills unfamiliar forms such as Workday, iCIMS, Zoho Recruit, and custom career sites. It reads controls inside iframes and works through multi-page forms. It records every question it sees, and anything it can't answer is listed for the candidate. Code refuses any click that would submit the application.

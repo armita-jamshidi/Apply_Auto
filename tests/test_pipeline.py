@@ -318,6 +318,31 @@ def test_cleanup_removes_out_of_scope_jobs_but_never_applied_ones(session: Sessi
     assert "Not an AI or agent engineering role" in sales.dealbreakers
 
 
+def test_cleanup_rechecks_years_after_the_description_changes(session: Session) -> None:
+    # Discovery saw no years; the company's own page later said 8+.
+    prepared = add_job(
+        session,
+        "https://jobs.lever.co/a/data-ai",
+        status="manual_review",
+        title="Data & AI Engineer",
+        description="<li>8+ years building data and AI platforms</li>",
+    )
+    fine = add_job(
+        session,
+        "https://jobs.lever.co/a/ai",
+        status="manual_review",
+        description="1-2 years of experience with Python.",
+    )
+    new_grad = add_job(session, "https://jobs.lever.co/a/ng", title="AI Engineer, New Grad")
+
+    assert pipeline.remove_out_of_scope_jobs(session, load_settings()) == 1
+
+    assert prepared.status == "removed" and prepared.min_years_experience == 8
+    assert "Requires 8+ years" in prepared.dealbreakers[0]
+    assert fine.status == "manual_review" and fine.min_years_experience == 1
+    assert new_grad.status == "new"
+
+
 def test_cleanup_removes_jobs_outside_nc_or_remote(session: Session) -> None:
     onsite = add_job(
         session,
