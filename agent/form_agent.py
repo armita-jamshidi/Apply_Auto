@@ -55,6 +55,8 @@ MAX_STEPS = 150
 STEPS_WARNING = 12
 MAX_CONTROLS = 250
 CLICK_TIMEOUT_MS = 8000
+# Where the agent's window goes so it is on the main screen: its top-left corner.
+WINDOW_ON_SCREEN = {"left": 0, "top": 0}
 # Whether what sits on top of a control's center belongs to the control's own widget (a
 # styled box over a hidden checkbox) rather than to something else (a cookie banner).
 OWN_WIDGET_ON_TOP_SCRIPT = """el => {
@@ -973,6 +975,25 @@ def working_page(browser: Any) -> Page:
     return page
 
 
+def bring_window_forward(page: Page) -> None:
+    """Put the agent's browser window on screen, in front of other windows.
+
+    Windows does not let a program started in the background (here, by the dashboard) put
+    its window in front, so the agent's Chrome could open hidden behind the dashboard's
+    browser. Chrome also reopens a window where it last was, which can be off screen after a
+    monitor is unplugged. Minimizing then restoring the window brings it forward, and
+    moving it to the screen's top-left corner keeps it visible.
+    """
+    try:
+        session = page.context.new_cdp_session(page)
+        window = session.send("Browser.getWindowForTarget")["windowId"]
+        for bounds in ({"windowState": "minimized"}, {"windowState": "normal"}, WINDOW_ON_SCREEN):
+            session.send("Browser.setWindowBounds", {"windowId": window, "bounds": bounds})
+        session.detach()
+    except (PlaywrightError, KeyError) as error:
+        LOGGER.warning("Could not bring the browser window forward: %s", error)
+
+
 def show_message(page: Page, heading: str, text: str) -> None:
     """Show a short message in the browser window, so it never sits blank."""
     try:
@@ -1063,6 +1084,11 @@ def _main(argv: list[str] | None = None) -> int:
                 page,
                 f"Opening {job.company} - {job.title}",
                 "The agent is loading the application. Keep this window open.",
+            )
+            bring_window_forward(page)
+            print(
+                "The agent is working in its own Chrome window. If you do not see it, click "
+                "the Chrome icon in the taskbar."
             )
         try:
             result = run_form_agent(

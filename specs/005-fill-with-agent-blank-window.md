@@ -35,6 +35,11 @@ available.
    the error ended the program and closed the window with no explanation.
 3. When Chrome restored earlier tabs, the agent could work in a tab other than the one in
    front.
+4. Reported after the first fix: the console showed the agent working, but no Chrome window
+   appeared. Windows does not let a program started in the background (the dashboard)
+   put its window in front, so the agent's Chrome opened behind the dashboard's browser.
+   Chrome also reopens a window where it last was, which can be off screen after a monitor
+   change.
 
 ## Fix
 
@@ -47,6 +52,9 @@ available.
 - If the application page does not open, the window says why and gives the link, and the
   console says the same.
 - Any error now stays on screen until you press Enter.
+- Once open, the agent's window is minimized and restored, which brings it in front on
+  Windows, and moved to the top-left corner of the main screen. The console also says to
+  click Chrome in the taskbar if the window is still not visible.
 
 ## How to test
 

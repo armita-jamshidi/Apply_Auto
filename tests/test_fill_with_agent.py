@@ -192,6 +192,42 @@ def test_agent_works_in_the_blank_tab_or_a_new_one_in_front() -> None:
     assert page is not restored and page.in_front and len(browser.pages) == 2
 
 
+class FakeSession:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.sent: list[tuple[str, dict]] = []
+        self.detached = False
+
+    def send(self, method: str, params: dict | None = None) -> dict:
+        if self.fail:
+            raise PlaywrightError("Target closed")
+        self.sent.append((method, params or {}))
+        return {"windowId": 7} if method == "Browser.getWindowForTarget" else {}
+
+    def detach(self) -> None:
+        self.detached = True
+
+
+def test_the_agents_window_is_brought_forward_and_onto_the_screen() -> None:
+    session = FakeSession()
+    page = FakePage()
+    page.context = type("Context", (), {"new_cdp_session": lambda _self, _page: session})()
+
+    form_agent.bring_window_forward(page)
+
+    states = [params["bounds"] for method, params in session.sent[1:]]
+    assert states == [
+        {"windowState": "minimized"},  # minimize, then restore: Windows brings it forward
+        {"windowState": "normal"},
+        {"left": 0, "top": 0},  # back on the main screen if Chrome reopened it off screen
+    ]
+    assert all(params.get("windowId") == 7 for _method, params in session.sent[1:])
+    assert session.detached
+
+    page.context = type("Context", (), {"new_cdp_session": lambda _s, _p: FakeSession(True)})()
+    form_agent.bring_window_forward(page)  # a closed window is not an error
+
+
 def test_a_page_that_will_not_open_is_explained_not_left_blank(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("agent.form_agent.load_profile", lambda _path: {})
     monkeypatch.setattr("agent.form_agent.extract_resume_text", lambda _path: "Python.")
