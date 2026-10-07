@@ -78,7 +78,10 @@ python -m playwright install chromium
 copy .env.example .env               # add ANTHROPIC_API_KEY and RESUME_PATH
 python scripts/install_hooks.py      # privacy guard
 job-run                              # discover, score, prepare, open the dashboard
+job-daily --install                  # prepare new jobs every morning before 9am Eastern
 ```
+
+`job-daily --install` registers a morning run with Windows Task Scheduler (or cron on macOS and Linux). It finds and scores new jobs, then builds a tailored resume and every answer for each good match, so they are waiting in the dashboard by `daily_run.ready_by` in [config/settings.yaml](config/settings.yaml). The log is in `data/daily-run.log`.
 
 Put your private profile in `profile/profile.yaml` (see the fictional [profile.example.yaml](profile/profile.example.yaml)). Put your long list of jobs, projects, and activities (any Markdown, text, PDF, or Word files) in `profile/library/`, and samples of your own writing in `profile/writing_samples/`. All three are git-ignored and blocked by the privacy hook. The scope, models, and caps are set in [config/settings.yaml](config/settings.yaml).
 
@@ -89,6 +92,7 @@ Put your private profile in `profile/profile.yaml` (see the fictional [profile.e
 | `job-apply` | Fill a Greenhouse, Lever, Ashby, or SmartRecruiters form (dry run; `--hand-off`, `--assist`, `--live`) |
 | `job-agent-fill` | Run the form agent on any other application form |
 | `job-company-pages` | Find third-party jobs on the company's own site |
+| `job-daily` | Morning run: find, score, and build kits for new good matches; `--install` schedules it every morning (Task Scheduler or cron), `--uninstall` stops it |
 | `job-kit` | Build one job's kit: tailored resume and every answer (`--list` for job ids, `--question` for one-off answers) |
 | `job-dashboard` | Serve the dashboard at `http://127.0.0.1:8765/` |
 
