@@ -66,7 +66,10 @@ def test_a_real_browser_holds_its_profile(tmp_path: Path) -> None:
     profile = tmp_path / "profile"
     with sync_playwright() as playwright:
         try:
-            context = playwright.chromium.launch_persistent_context(str(profile), headless=True)
+            # Full Chromium, like the hand-off browser; the headless shell takes no profile lock.
+            context = playwright.chromium.launch_persistent_context(
+                str(profile), channel="chromium", headless=True
+            )
         except PlaywrightError as error:
             pytest.skip(f"Chromium is not installed: {str(error).splitlines()[0]}")
         assert browser_profile.browser_profile_in_use(profile)
