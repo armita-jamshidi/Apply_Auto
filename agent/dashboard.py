@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from agent.applier.base import application_urls
+from agent.applier.browser_profile import PROFILE_IN_USE_MESSAGE, browser_profile_in_use
 from agent.applier.greenhouse import ApplierResult
 from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, review_rows
 from agent.apply_kit import (
@@ -1138,11 +1139,13 @@ def make_handler(
     answer_question: Callable[[Job, str], dict[str, Any]] | None = None,
     launch: Callable[[list[str]], None] | None = None,
     check_api: Callable[[], str | None] | None = None,
+    browser_busy: Callable[[], bool] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Request handler that renders the dashboard and saves status changes."""
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     launch = launch or launch_in_new_window
     check_api = check_api or api_problem
+    browser_busy = browser_busy or browser_profile_in_use
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
@@ -1226,6 +1229,10 @@ def make_handler(
                     title, company = job.title, job.company
             if command is None:
                 self._json(400, {"error": "No application form is known for this job yet."})
+                return
+            if browser_busy():
+                # A second browser on the same profile only opens a blank tab in the first.
+                self._json(409, {"error": PROFILE_IN_USE_MESSAGE})
                 return
             problem = check_api()
             if problem is not None:

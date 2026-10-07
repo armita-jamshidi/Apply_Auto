@@ -19,6 +19,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from agent.applier.ashby import run_ashby_application
 from agent.applier.base import application_urls
+from agent.applier.browser_profile import (
+    BROWSER_PROFILE_DIR,
+    PROFILE_IN_USE_MESSAGE,
+    browser_profile_in_use,
+)
 from agent.applier.greenhouse import (
     ApplierResult,
     load_profile,
@@ -45,7 +50,6 @@ from db.session import create_database_engine, create_session_factory, ensure_sc
 LOGGER = logging.getLogger(__name__)
 PLATFORM_HOSTS = FILLABLE_HOSTS
 # Hand-off browser profile: keeps the logins people make in that window between runs.
-BROWSER_PROFILE_DIR = PROJECT_ROOT / ".playwright" / "profile"
 HUMAN_CHALLENGE_WAIT_MS = 10 * 60 * 1000
 # Everyday Chrome profiles: automation must not use them (Chrome blocks it, and they hold
 # every login the person has).
@@ -161,6 +165,8 @@ def launch_hand_off_browser(
             "--browser-profile must not be your everyday Chrome profile; Chrome blocks "
             "automation there and it holds all your logins. Use a separate folder."
         )
+    if browser_profile_in_use(profile):
+        raise SystemExit(PROFILE_IN_USE_MESSAGE)
     profile.mkdir(parents=True, exist_ok=True)
     if browser == "chrome":
         try:
