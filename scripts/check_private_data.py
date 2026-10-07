@@ -19,6 +19,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PRIVATE_PATTERNS = (
     "profile/profile.yaml",
     "profile/*.pdf",
+    "profile/*.docx",
+    "profile/master_cv*",
     "profile/resume*",
     "profile/library/*",
     "profile/writing_samples/*",

@@ -9,8 +9,10 @@ Use the project command; do not write the resume yourself or read the private so
 
 1. Job id: `job-kit --list` (or the id the user gave).
 2. `job-kit --job-id <id> --no-questions --resume-only`
-   - Sources: the resume (`RESUME_PATH`) and every file in `profile/library/` (the long
-     experience bank). More material there means better fits.
+   - Sources: the master CV (`MASTER_CV_PATH`, default `profile/master_cv.pdf`), the resume
+     (`RESUME_PATH`), and every file in `profile/library/`. More material means better fits.
+   - Look: font, text size, and section headings copied from the format example
+     (`RESUME_FORMAT_PATH`, default the `RESUME_PATH` resume).
    - Output: `kits/job-<id>/resume-<company>-<title>-<date>.docx` and `keywords.md`.
    - Every bullet is checked against exact quotes from those sources; a bullet naming a tool
      or number the sources do not support is dropped and the original wording kept.

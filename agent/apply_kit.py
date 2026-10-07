@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from agent.answer_agent import KitAnswer, answer_questions, questions_for_job
+from agent.resume_format import ResumeSources, load_resume_sources
 from agent.settings import PROJECT_ROOT, load_settings
 from db.models import Application, Job
 
@@ -63,6 +64,7 @@ def build_kit(
     make_resume: bool = True,
     make_answers: bool = True,
     answerer: Callable[[str, bool], Any] | None = None,
+    sources: ResumeSources | None = None,
 ) -> Kit:
     """Run both sub-agents for one job and record the kit; see the module docstring."""
     from agent.answers import answer_custom_question
@@ -99,9 +101,17 @@ def build_kit(
         worker.start()
     if make_resume:
         try:
+            sources = sources or ResumeSources()
             resume = tailor_resume(
-                job_context, resume_text, client=client, model=resume_model, ask=ask
+                job_context,
+                resume_text,
+                client=client,
+                model=resume_model,
+                ask=ask,
+                master_cv_text=sources.master_cv_text,
+                layout=sources.layout,
             )
+            resume.notes = [*sources.notes, *resume.notes]
             folder = kit_folder(job.id)
             kit.resume_path = write_docx(resume, output_path(folder, job.company, job.title))
             kit.report_path = folder / "keywords.md"
@@ -272,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         return _list_jobs(settings.database_url)
     profile = load_profile(args.profile)
     resume_text = extract_resume_text(args.resume or default_resume_path())
+    sources = load_resume_sources()
     engine = create_database_engine(settings.database_url)
     try:
         ensure_schema(engine)
@@ -298,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
                 resume_model=settings.resume_tailor_model,
                 ask=None if args.no_questions else ask_in_console,
                 make_resume=not args.answers_only,
+                sources=sources,
                 make_answers=not args.resume_only,
             )
     finally:
