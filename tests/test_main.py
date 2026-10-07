@@ -84,6 +84,7 @@ def test_discovery_keeps_only_early_career_and_unstated_levels(
         listing("Software Engineer", "Open to new graduates of 2026."),
         listing("Senior Software Engineer"),
         listing("Platform Engineer", "Requires 6+ years of experience."),
+        listing("Data Engineer", "<li>3+ years building data pipelines</li>"),
         listing("Support Engineer"),
     ]
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -97,10 +98,12 @@ def test_discovery_keeps_only_early_career_and_unstated_levels(
 
     output = capsys.readouterr().out
     assert "Junior Software Engineer | Lever Example | early" in output
-    assert "New Grad" not in output
+    # Recent graduates qualify for new-grad roles; internships and co-ops stay out.
+    assert "Software Engineer, New Grad | Lever Example | early" in output
+    assert "[new] Software Engineer | Lever Example" in output
     assert "Intern" not in output
     assert "Co-op" not in output
-    assert "[new] Software Engineer | Lever Example" not in output
+    assert "Data Engineer" not in output
     assert "Support Engineer | Lever Example | unknown" in output
     assert "Senior Software Engineer" not in output
     assert "Platform Engineer" not in output

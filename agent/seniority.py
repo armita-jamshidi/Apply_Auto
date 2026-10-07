@@ -24,8 +24,35 @@ _EARLY_TITLE = re.compile(
 _LEVEL_ONE = re.compile(r"\b(?:I|1)\s*(?:$|[,(\-–/])", re.IGNORECASE)
 _LEVEL_LATER = re.compile(r"\b(?:II|III|IV|V|2|3|4|5)\s*(?:$|[,(\-–/])")
 _YEARS = re.compile(
-    r"(?:at least|minimum of|min\.?|over)?\s*(\d{1,2})\s*(?:\+|plus)?\s*"
-    r"(?:(?:-|–|to)\s*(\d{1,2})\s*)?\+?\s*years?",
+    r"(?:(?P<floor>at least|minimum of|min\.?)|over)?\s*(\d{1,2})\s*(?P<plus>\+|plus|or more)?\s*"
+    r"(?:(?:-|–|to)\s*(\d{1,2})\s*)?(?P<plus2>\+)?\s*(?:years?|yrs?)\b"
+    r"(?P<after>[\s'’]*(?:of\s+)?\w*)",
+    re.IGNORECASE,
+)
+# Words that follow a requirement such as "8+ years building data platforms".
+_REQUIREMENT_AFTER = re.compile(
+    r"^[\s'’]*(?:of\s+)?(?:experience|experienced|professional|industry|relevant|related"
+    r"|hands|work|working|building|developing|designing|leading|delivering|deploying"
+    r"|shipping|managing|writing|programming|coding|in|with|as|across|doing|applying"
+    r"|production|software|engineering|data|machine|ml|ai)\b",
+    re.IGNORECASE,
+)
+# "in business for 20 years" or "a 4-year degree" are not experience requirements.
+_NOT_REQUIREMENT_AFTER = re.compile(
+    r"^[\s'’]*(?:of\s+)?(?:ago|old|history|existence|in business|business|degree|program)\b",
+    re.IGNORECASE,
+)
+_NUMBER_WORDS = {
+    word: str(number)
+    for number, word in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+        "fourteen fifteen".split()
+    )
+}
+# "eight (8) or more years" and "Eight+ years" become "8 or more years" and "8+ years".
+_SPELLED_YEARS = re.compile(
+    r"\b(" + "|".join(_NUMBER_WORDS) + r")\b(?:\s*\(\d{1,2}\))?"
+    r"(?=\s*(?:\+|plus|or more)?\s*(?:-|–|to)?\s*\w*\s*(?:years?|yrs?)\b)",
     re.IGNORECASE,
 )
 _PREFERRED = re.compile(
@@ -47,12 +74,22 @@ def required_years(description: str) -> int | None:
     """Return the highest minimum years of experience a description requires."""
     minimums: list[int] = []
     description = _plain_text(description)
+    description = _SPELLED_YEARS.sub(lambda m: _NUMBER_WORDS[m.group(1).casefold()], description)
     for sentence in re.split(r"(?<=[.!?;\n])\s*|\s+-\s+|•", description):
-        if not _EXPERIENCE.search(sentence) or _PREFERRED.search(sentence):
+        if _PREFERRED.search(sentence):
             continue
+        mentions_experience = bool(_EXPERIENCE.search(sentence))
         for match in _YEARS.finditer(sentence):
-            years = int(match.group(1))
-            if years <= 30:
+            years = int(match.group(2))
+            if years > 30 or _NOT_REQUIREMENT_AFTER.match(match.group("after")):
+                continue
+            # A bare "8+ years" line (a bullet under "Experience:") still states a minimum.
+            stated_minimum = any(match.group(name) for name in ("floor", "plus", "plus2"))
+            if (
+                mentions_experience
+                or stated_minimum
+                or _REQUIREMENT_AFTER.match(match.group("after"))
+            ):
                 minimums.append(years)
     return max(minimums) if minimums else None
 

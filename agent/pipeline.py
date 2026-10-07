@@ -27,6 +27,7 @@ from agent.filters import company_key, is_ambiguous_location, normalize_location
 from agent.main import main as discover
 from agent.postings import close_finished_postings
 from agent.scorer import FitAssessment, score_job
+from agent.seniority import classify_experience
 from agent.settings import (
     PROJECT_ROOT,
     AgentSettings,
@@ -59,16 +60,23 @@ Runner = Callable[[list[str]], int]
 def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     """Remove found jobs the current settings rule out; return how many.
 
-    That is internships, co-ops, new-grad roles, postings older than max_posting_age_days,
-    titles outside the wanted roles
+    That is internships, co-ops, roles needing more years than max_years_experience,
+    postings older than max_posting_age_days, titles outside the wanted roles
     (title_keywords and title_role_keywords), and locations outside North Carolina or US
-    remote. Applied, prepared, and already removed jobs are left alone. Removed jobs are
-    hidden, and discovery does not add them back.
+    remote. Each job's years of experience are read again from its current description,
+    which the company's own page may have replaced since discovery. A prepared job that
+    turns out to need too many years is removed too; applied and already removed jobs are
+    left alone. Removed jobs are hidden, and discovery does not add them back.
     """
-    jobs = session.scalars(select(Job).where(Job.status.in_(("new", "queued", "skipped")))).all()
+    jobs = session.scalars(
+        select(Job).where(Job.status.in_(("new", "queued", "skipped", READY_FOR_YOU)))
+    ).all()
     removed = 0
     for job in jobs:
+        job.min_years_experience = classify_experience(job.title, job.description).min_years
         reason = excluded_role_reason(job.title, job.description, settings)
+        if reason is None and job.status == READY_FOR_YOU:
+            continue
         if reason is None:
             reason = stale_posting_reason(job.posted_at, settings)
         if reason is None and not title_in_scope(job.title, settings):
