@@ -3,6 +3,10 @@
 /profile/resume.pdf
 /profile/resume.*
 /profile/*resume*.pdf
+# The master CV and any other resume or CV file kept in profile/
+/profile/*.pdf
+/profile/*.docx
+/profile/master_cv*
 # Private essays, project write-ups, and other source material for answers
 /profile/library/
 # Samples of your own writing, used only to match your voice in written answers

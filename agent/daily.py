@@ -276,9 +276,11 @@ def _kit_builder(settings: AgentSettings) -> KitBuilder:
     from agent.applier.greenhouse import extract_resume_text, load_profile
     from agent.apply_kit import build_kit
     from agent.pipeline import PROFILE_PATH
+    from agent.resume_format import load_resume_sources
 
     profile: dict[str, Any] = load_profile(PROFILE_PATH)
     resume_text = extract_resume_text(default_resume_path())
+    sources = load_resume_sources()
     client = _create_client()
 
     def build(session: Session, job: Job) -> Kit:
@@ -291,6 +293,7 @@ def _kit_builder(settings: AgentSettings) -> KitBuilder:
             answer_model=settings.anthropic_model,
             resume_model=settings.resume_tailor_model,
             ask=None,
+            sources=sources,
         )
 
     return build

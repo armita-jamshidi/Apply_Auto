@@ -5,6 +5,9 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+0. **Resume builder from a master CV.** Pick and reword each resume's entries from the
+   master CV, and copy the look of the candidate's own one-page resume.
+   Spec: [specs/006-resume-builder.md](specs/006-resume-builder.md).
 1. **Keep the tailored resume to one page.** Check the Word file's page count after the
    resume sub-agent writes it, and trim the lowest-value bullets until it fits.
 

@@ -36,12 +36,14 @@ def test_private_files_are_blocked_but_examples_are_allowed() -> None:
         "screenshots/shot.png",
         "dashboard.html",
         ".playwright/profile/Default/Cookies",
+        "profile/master_cv.pdf",
+        "profile/master_cv.docx",
         ".env.example",
         "profile/profile.example.yaml",
         "agent/dashboard.py",
     ]
 
-    assert guard.private_paths(staged) == staged[:8]
+    assert guard.private_paths(staged) == staged[:10]
 
 
 def test_workspace_personal_context_is_blocked_but_templates_are_allowed() -> None:
