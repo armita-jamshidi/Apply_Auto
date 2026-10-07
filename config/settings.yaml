@@ -16,8 +16,9 @@ network:
 discovery:
   # Keep early-career, mid-level, and unstated-level roles; add senior to widen.
   experience_levels: [early, mid, unknown]
-  # Drop roles whose description requires more than this many years of experience. A
-  # mid-level role (for example "Engineer II") must state that it needs this many or fewer.
+  # Drop roles whose description requires more than this many years of experience (so 3+
+  # years is dropped). A mid-level role (for example "Engineer II") must state that it needs
+  # this many or fewer. Jobs already found are checked again on every run.
   max_years_experience: 2
   # Also read these remote job boards and forums: weworkremotely (RSS feed), hackernews
   # (the monthly "Who is hiring?" thread), and himalayas (job search API, searched for AI,
@@ -35,8 +36,9 @@ discovery:
   careers_agent_limit: 5
   # Also search companies from the public SimplifyJobs New-Grad-Positions list.
   include_new_grad_list: true
-  # Never keep internships, co-ops, or new-grad roles (matched in titles), or postings that
-  # say they are for new graduates (matched in descriptions). Set a list to [] to allow them.
+  # Never keep internships or co-ops (matched in titles). New-grad roles are kept: you
+  # graduated in December 2025. Add phrases to exclude_description_phrases to drop postings
+  # whose description contains them.
   exclude_title_keywords:
     - intern
     - interns
@@ -46,27 +48,7 @@ discovery:
     - co-ops
     - coop
     - co op
-    - new grad
-    - new grads
-    - new-grad
-    - new graduate
-    - new graduates
-    - recent grad
-    - recent graduate
-    - university grad
-    - university graduate
-    - college grad
-    - college grads
-    - college graduate
-    - college graduates
-  exclude_description_phrases:
-    - new grad
-    - new grads
-    - new-grad
-    - new graduate
-    - new graduates
-    - new college grad
-    - new college graduate
+  exclude_description_phrases: []
   # Keep only AI and agent engineering roles: a title must contain one of title_keywords
   # (the AI side) and one of title_role_keywords (the engineering side), for example
   # "AI Engineer", "Agent Engineer", "Machine Learning Engineer", or "Forward Deployed

@@ -49,3 +49,29 @@ def test_assessment_explains_its_decision() -> None:
 
     assert (assessment.level, assessment.min_years) == ("mid", 3)
     assert "3+ years" in assessment.reason
+
+
+@pytest.mark.parametrize(
+    ("description", "years"),
+    [
+        # Bullets that never say "experience" still state a requirement.
+        ("<ul><li>8+ years building data platforms</li></ul>", 8),
+        ("Qualifications: 8+ years in data and analytics roles", 8),
+        ("You have 8+ years working with data &amp; AI systems", 8),
+        ("Experience:\n8+ years", 8),
+        ("8 to 10 years in software engineering", 8),
+        ("Eight or more years of experience in AI", 8),
+        ("Eight (8) years of experience in AI", 8),
+        ("8+ yrs experience", 8),
+        ("BS with 8+ years of experience preferred; MS with 5+ years required", 5),
+        ("1-2 years of experience with Python", 1),
+        # Numbers of years that are not experience requirements.
+        ("We have been in business for 20 years.", None),
+        ("Founded 25 years ago, we build tools.", None),
+        ("A 4-year degree in computer science.", None),
+        ("Our product has served customers for over 10 years.", None),
+        ("Offer valid for 2 years.", None),
+    ],
+)
+def test_required_years_reads_common_phrasings(description: str, years: int | None) -> None:
+    assert required_years(description) == years
