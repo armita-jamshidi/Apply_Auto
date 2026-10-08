@@ -158,7 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
 def launch_hand_off_browser(
     playwright: Playwright, browser: str, profile_dir: Path | None
 ) -> BrowserContext:
-    """Open a visible, persistent browser for hand-off, preferring the installed Chrome."""
+    """Open a visible, persistent browser for hand-off, preferring the installed Chrome.
+
+    no_viewport lets the page fit the window. Playwright otherwise draws every page at a
+    fixed 1280x720, so in a smaller window the bottom of the form is cut off and cannot be
+    scrolled to.
+    """
     profile = (profile_dir or BROWSER_PROFILE_DIR).expanduser().resolve()
     if is_everyday_chrome_profile(profile):
         raise SystemExit(
@@ -171,7 +176,11 @@ def launch_hand_off_browser(
     if browser == "chrome":
         try:
             return playwright.chromium.launch_persistent_context(
-                str(profile), headless=False, channel="chrome", chromium_sandbox=True
+                str(profile),
+                headless=False,
+                channel="chrome",
+                chromium_sandbox=True,
+                no_viewport=True,
             )
         except PlaywrightError as error:
             LOGGER.warning(
@@ -180,7 +189,7 @@ def launch_hand_off_browser(
             )
     # Playwright disables Chrome's sandbox unless asked; keep it on.
     return playwright.chromium.launch_persistent_context(
-        str(profile), headless=False, chromium_sandbox=True
+        str(profile), headless=False, chromium_sandbox=True, no_viewport=True
     )
 
 

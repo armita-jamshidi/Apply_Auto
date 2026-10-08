@@ -77,6 +77,29 @@ def test_a_real_browser_holds_its_profile(tmp_path: Path) -> None:
     assert not browser_profile.browser_profile_in_use(profile)
 
 
+def test_without_a_fixed_viewport_the_page_fits_a_small_window(tmp_path: Path) -> None:
+    """The hand-off browser passes no_viewport; this shows why (the form could not scroll)."""
+    from playwright.sync_api import sync_playwright
+
+    sizes = {}
+    with sync_playwright() as playwright:
+        for no_viewport in (False, True):
+            try:
+                context = playwright.chromium.launch_persistent_context(
+                    str(tmp_path / f"profile-{no_viewport}"),
+                    channel="chromium",
+                    headless=True,
+                    args=["--window-size=800,500"],
+                    no_viewport=no_viewport,
+                )
+            except PlaywrightError as error:
+                pytest.skip(f"Chromium is not installed: {str(error).splitlines()[0]}")
+            sizes[no_viewport] = context.pages[0].evaluate("[innerWidth, innerHeight]")
+            context.close()
+    assert sizes[False] == [1280, 720]  # taller than the window: the bottom is cut off
+    assert sizes[True][0] == 800 and sizes[True][1] < 500
+
+
 def test_hand_off_refuses_to_open_a_second_browser(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "browser_profile_in_use", lambda _profile: True)
 

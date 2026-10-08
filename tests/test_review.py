@@ -286,6 +286,7 @@ def test_hand_off_fills_in_kept_browser_and_waits_for_person(
                 headless: bool,
                 chromium_sandbox: bool,
                 channel: str | None = None,
+                no_viewport: bool = False,
             ):
                 assert chromium_sandbox is True
                 events.append(("launch", user_data_dir, headless, channel))
@@ -366,9 +367,11 @@ class FakeChromium:
         headless: bool,
         chromium_sandbox: bool,
         channel: str | None = None,
+        no_viewport: bool = False,
     ):
         assert headless is False
         assert chromium_sandbox is True, "Chrome's sandbox must stay on"
+        assert no_viewport is True, "the page must fit the window so it can be scrolled"
         self.calls.append(channel)
         if channel == "chrome" and not self.chrome_installed:
             raise PlaywrightError("Chromium distribution 'chrome' is not found")
