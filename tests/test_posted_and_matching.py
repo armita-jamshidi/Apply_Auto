@@ -250,7 +250,8 @@ def test_same_role_handles_wildcard_titles_and_company_suffixes(session: Session
 
 
 def test_cap_treats_company_suffixes_as_the_same_company(session: Session) -> None:
-    for index, company in enumerate(["Direct Supply, Inc.", "Direct Supply", "direct supply"]):
+    names = ["Direct Supply, Inc.", "Direct Supply", "direct supply", "Direct Supply LLC"]
+    for index, company in enumerate(names):
         session.add(
             Job(
                 source="lever", platform="lever", company=company, title=f"AI Engineer {index}",

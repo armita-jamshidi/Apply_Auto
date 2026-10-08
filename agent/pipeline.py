@@ -23,7 +23,7 @@ from agent.applier.review import FitSummary
 from agent.careers_agent import check_company_pages
 from agent.dashboard import DEFAULT_PORT, refresh_dashboard
 from agent.dashboard import serve as serve_dashboard
-from agent.filters import company_key, is_ambiguous_location, normalize_location
+from agent.filters import is_ambiguous_location, normalize_location
 from agent.main import main as discover
 from agent.postings import close_finished_postings
 from agent.scorer import FitAssessment, score_job
@@ -43,7 +43,14 @@ from agent.sources.company_apply import (
     is_careers_listing,
     links_in,
 )
-from agent.tracking import READY_FOR_YOU, REMOVED, qualification_problem, store_fit
+from agent.tracking import (
+    OPEN_STATUSES,
+    READY_FOR_YOU,
+    REMOVED,
+    best_jobs_per_company,
+    qualification_problem,
+    store_fit,
+)
 from agent.types import FILLABLE_PLATFORMS, is_fillable
 from db.models import Job
 from db.session import create_database_engine, create_session_factory, ensure_schema
@@ -150,31 +157,15 @@ def cap_jobs_per_company(session: Session, settings: AgentSettings) -> int:
     removed jobs are not counted or changed.
     """
     limit = settings.max_jobs_per_company
-    if not limit:
-        return 0
-    jobs = session.scalars(
-        select(Job).where(Job.status.in_(("new", "queued", READY_FOR_YOU)))
-    ).all()
-    by_company: dict[str, list[Job]] = {}
-    for job in jobs:
-        by_company.setdefault(company_key(job.company), []).append(job)
-    removed = 0
-    for group in by_company.values():
-        group.sort(
-            key=lambda job: (
-                job.status != READY_FOR_YOU,
-                -(job.fit_score if job.fit_score is not None else -1),
-                -job.id,
-            )
-        )
-        for job in group[limit:]:
-            reason = f"Kept the {limit} most relevant roles at {job.company}"
-            job.status = REMOVED
-            job.dealbreakers = list(dict.fromkeys([reason, *(job.dealbreakers or [])]))
-            removed += 1
-            print(f"[removed] {job.company} | {job.title} | {reason}")
+    jobs = session.scalars(select(Job).where(Job.status.in_(OPEN_STATUSES))).all()
+    _kept, extra = best_jobs_per_company(list(jobs), limit)
+    for job in extra:
+        reason = f"Kept the {limit} most relevant roles at {job.company}"
+        job.status = REMOVED
+        job.dealbreakers = list(dict.fromkeys([reason, *(job.dealbreakers or [])]))
+        print(f"[removed] {job.company} | {job.title} | {reason}")
     session.commit()
-    return removed
+    return len(extra)
 
 
 def score_unscored_jobs(

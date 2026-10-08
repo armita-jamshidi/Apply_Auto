@@ -200,6 +200,25 @@ def test_dashboard_orders_groups_and_links_next_steps(session: Session, tmp_path
     assert "data-group='skipped'" in html
 
 
+def test_dashboard_shows_the_three_best_open_roles_per_company(
+    session: Session, tmp_path: Path
+) -> None:
+    ready = add_job(session, "https://example.com/r", status="manual_review", fit_score=50)
+    best = add_job(session, "https://example.com/1", fit_score=90, company="Example, Inc.")
+    good = add_job(session, "https://example.com/2", fit_score=80)
+    add_job(session, "https://example.com/3", fit_score=70)
+    add_job(session, "https://example.com/4")
+    applied = add_job(session, "https://example.com/a", status="applied", fit_score=99)
+    skipped = add_job(session, "https://example.com/s", status="skipped")
+    other = add_job(session, "https://example.com/o", company="Other Co", fit_score=10)
+
+    rows = dashboard.write_dashboard(session, tmp_path / "dashboard.html")
+
+    shown = {row.job.id for row in rows}
+    assert shown == {ready.id, best.id, good.id, applied.id, skipped.id, other.id}
+    assert len(dashboard.dashboard_rows(session)) == 8  # no limit: every job
+
+
 def test_empty_dashboard_explains_how_to_find_jobs(session: Session, tmp_path: Path) -> None:
     page = tmp_path / "dashboard.html"
 
