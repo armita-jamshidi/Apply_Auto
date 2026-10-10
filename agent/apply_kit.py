@@ -12,6 +12,7 @@ it, with the Word resume under kits/job-<id>/ (git-ignored). Nothing is submitte
 """
 
 import argparse
+import json
 import logging
 import sys
 import threading
@@ -33,6 +34,8 @@ KITS_DIR = PROJECT_ROOT / "kits"
 KIT_MODE = "kit"
 # Kit note saying the form's questions were read from the job board's API.
 BOARD_QUESTIONS_NOTE = "Form questions"
+# Kit note holding the qualification map as JSON (see agent.resume_tailor.qualification_map).
+QUALIFICATION_MAP_NOTE = "Qualification map"
 Ask = Callable[[str, Any], str | None]  # see agent.resume_tailor.Ask
 
 
@@ -43,6 +46,8 @@ class Kit:
     answers: list[KitAnswer] = field(default_factory=list)
     resume_path: Path | None = None
     report_path: Path | None = None
+    qualification_map: list[dict[str, Any]] = field(default_factory=list)
+    map_path: Path | None = None
     problems: list[str] = field(default_factory=list)
     from_board: bool = False  # the questions came from the board's API, not a form reading
 
@@ -68,7 +73,14 @@ def build_kit(
 ) -> Kit:
     """Run both sub-agents for one job and record the kit; see the module docstring."""
     from agent.answers import answer_custom_question
-    from agent.resume_tailor import keyword_report, output_path, tailor_resume, write_docx
+    from agent.resume_tailor import (
+        keyword_report,
+        output_path,
+        qualification_map,
+        qualification_map_markdown,
+        tailor_resume,
+        write_docx,
+    )
 
     kit = Kit()
     job_context = {"company": job.company, "title": job.title, "description": job.description}
@@ -116,6 +128,15 @@ def build_kit(
             kit.resume_path = write_docx(resume, output_path(folder, job.company, job.title))
             kit.report_path = folder / "keywords.md"
             kit.report_path.write_text(keyword_report(resume), encoding="utf-8")
+            # After write_docx, so bullets trimmed to fit one page are not counted.
+            kit.qualification_map = qualification_map(resume)
+            kit.map_path = folder / "qualifications.md"
+            kit.map_path.write_text(
+                qualification_map_markdown(
+                    kit.qualification_map, company=job.company, title=job.title
+                ),
+                encoding="utf-8",
+            )
         except Exception as error:
             LOGGER.exception("The resume sub-agent failed")
             kit.problems.append(f"Resume: {error}")
@@ -138,6 +159,8 @@ def record_kit(session: Session, job: Job, kit: Kit) -> Application:
         notes["Kit problems"] = "; ".join(kit.problems)
     if kit.report_path is not None and kit.report_path.is_file():
         notes["Resume keywords"] = kit.report_path.read_text(encoding="utf-8")
+    if kit.qualification_map:
+        notes[QUALIFICATION_MAP_NOTE] = json.dumps(kit.qualification_map)
     application = Application(
         job_id=job.id,
         mode=KIT_MODE,
@@ -328,6 +351,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nAnswered {ready} of {len(kit.answers)} questions.")
     if kit.resume_path:
         print(f"Tailored resume: {kit.resume_path}")
+    if kit.map_path:
+        hit = sum(1 for row in kit.qualification_map if row["matches"])
+        print(f"Qualification map: {kit.map_path} ({hit} of {len(kit.qualification_map)} hit)")
     if kit.report_path:
         print(kit.report_path.read_text(encoding="utf-8"))
     for problem in kit.problems:

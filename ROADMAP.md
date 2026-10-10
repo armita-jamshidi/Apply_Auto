@@ -5,6 +5,11 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **Qualification map for every job.** For each posting, a table of every required and
+  preferred qualification and every duty, word for word, with the resume bullet that hits
+  each one, the source it was written from, and the gaps. First step toward making Job
+  Agent an agent (Oct 10, 2026).
+  Spec: [specs/008-qualification-map.md](specs/008-qualification-map.md).
 - **At most three roles per company.** Keep only the top three open matches for each
   company, in the pipeline and on the dashboard.
   Spec: [specs/007-roles-per-company.md](specs/007-roles-per-company.md).
