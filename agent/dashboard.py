@@ -28,6 +28,7 @@ from agent.applier.review import STATUS_LABELS, FieldRow, hand_off_command, revi
 from agent.apply_kit import (
     BOARD_QUESTIONS_NOTE,
     KITS_DIR,
+    QUALIFICATION_MAP_NOTE,
     form_was_read,
     latest_kit,
     questions_missing_from_kit,
@@ -51,7 +52,10 @@ DEFAULT_PORT = 8765
 NEW_TAB = "target='_blank' rel='noopener'"
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 # Kit notes about the whole kit, not about one question.
-KIT_NOTES = frozenset({"Resume keywords", "Kit problems", BOARD_QUESTIONS_NOTE})
+KIT_NOTES = frozenset(
+    {"Resume keywords", "Kit problems", BOARD_QUESTIONS_NOTE, QUALIFICATION_MAP_NOTE}
+)
+KIND_LABELS = {"required": "Required", "preferred": "Preferred", "duty": "What you'd do"}
 MISSING_FROM_KIT_NOTE = (
     "Found on the form after your answers were prepared. Redo resume and answers to answer it."
 )
@@ -322,6 +326,10 @@ body.with-panel main {{ margin-right: 440px; }}
 }}
 #panel .answers td:empty {{ display: none; }}
 .kind {{ font-size: 0.75rem; margin-left: 6px; }}
+.qmap ul {{ list-style: none; padding: 0; margin: 6px 0 0; }}
+.qmap li {{ padding: 8px 0; border-top: 1px solid var(--line); }}
+.qmap pre {{ margin: 2px 0 4px; padding: 0; border: 0; font: inherit; }}
+.qmap p {{ margin: 2px 0; font-size: 0.85rem; }}
 #toast {{
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 90vw;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -1026,6 +1034,8 @@ def _kit_html(job: Job, kit: Application | None) -> str:
             f"{escape(_format_date(kit.started_at))})</span></p>"
         )
     notes = kit.field_notes or {}
+    if notes.get(QUALIFICATION_MAP_NOTE):
+        parts.append(_qualification_map_html(notes[QUALIFICATION_MAP_NOTE]))
     if notes.get("Resume keywords"):
         parts.append(
             "<details><summary>Keywords from the job description</summary>"
@@ -1036,6 +1046,55 @@ def _kit_html(job: Job, kit: Application | None) -> str:
     if not form_was_read(job) and BOARD_QUESTIONS_NOTE not in notes:
         parts.append(f"<p class='muted'>{FORM_NOT_READ_NOTE}</p>")
     return f"<div class='kit' id='kit-{job.id}' hidden data-ready='1'>{''.join(parts)}</div>"
+
+
+def _qualification_map_html(stored: str) -> str:
+    """Each qualification and duty from the posting, with the resume bullets that hit it."""
+    try:
+        rows = json.loads(stored)
+    except ValueError:
+        return ""
+    if not isinstance(rows, list) or not rows:
+        return ""
+    items = []
+    for row in rows:
+        kind = KIND_LABELS.get(row.get("kind"), str(row.get("kind", "")))
+        head = (
+            f"<strong>{escape(str(row.get('id', '')))}</strong> "
+            f"<span class='kind muted'>{escape(kind)}</span>"
+            f"<pre>{escape(str(row.get('text', '')))}</pre>"
+        )
+        body = []
+        for match in row.get("matches") or []:
+            sources = "; ".join(
+                f"\u201c{source.get('quote', '')}\u201d ({source.get('document', '')})"
+                for source in match.get("sources") or []
+            )
+            body.append(
+                f"<p class='q-bullet'>On your resume ({escape(str(match.get('entry', '')))}): "
+                f"{escape(str(match.get('bullet', '')))}</p>"
+                + (f"<p class='muted q-source'>From: {escape(sources)}</p>" if sources else "")
+                + f"<p class='muted'>Terms hit: {escape(', '.join(match.get('terms') or []))}</p>"
+            )
+        missing = row.get("missing") or []
+        if not row.get("matches"):
+            gap = "Not on this resume."
+            if row.get("in_skills"):
+                gap = f"Only in Skills: {', '.join(row['in_skills'])}."
+            body.append(f"<p class='warn'>{escape(gap)}</p>")
+            for suggestion in row.get("suggestions") or []:
+                body.append(
+                    f"<p class='muted'>Suggested, if true, for {escape(suggestion['entry'])}: "
+                    f"{escape(suggestion['text'])}</p>"
+                )
+        elif missing:
+            body.append(f"<p class='warn'>Missing: {escape(', '.join(missing))}</p>")
+        items.append(f"<li>{head}{''.join(body)}</li>")
+    hit = sum(1 for row in rows if row.get("matches"))
+    return (
+        "<details class='qmap' open><summary>How your resume hits each qualification "
+        f"({hit} of {len(rows)})</summary><ul>{''.join(items)}</ul></details>"
+    )
 
 
 def _detail_html(row: DashboardRow, fields: list[FieldRow]) -> str:

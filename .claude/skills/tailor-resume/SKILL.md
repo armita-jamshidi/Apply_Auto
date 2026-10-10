@@ -13,13 +13,15 @@ Use the project command; do not write the resume yourself or read the private so
      (`RESUME_PATH`), and every file in `profile/library/`. More material means better fits.
    - Look: font, text size, and section headings copied from the format example
      (`RESUME_FORMAT_PATH`, default the `RESUME_PATH` resume).
-   - Output: `kits/job-<id>/resume-<company>-<title>-<date>.docx` and `keywords.md`.
+   - Output: `kits/job-<id>/resume-<company>-<title>-<date>.docx`, `keywords.md`, and
+     `qualifications.md` (each posting line, the bullet that hits it, and its source).
    - Every bullet is checked against exact quotes from those sources; a bullet naming a tool
      or number the sources do not support is dropped and the original wording kept.
 3. Keywords under "No evidence in your documents": `keywords.md` lists a suggested bullet for
    each, on the entry where it fits best. Show them to the user; for each one they confirm
    (or reword), append `## <keyword> (<entry>)\n<keyword>: <bullet>` to
    `profile/library/keyword_answers.md`, and rerun step 2. Never use an unconfirmed one.
-4. Report the .docx path and the used / not-used keyword lists.
+4. Report the .docx path, the used / not-used keyword lists, and the qualification lines
+   that are gaps in `qualifications.md`.
 
 The model is `resume_tailor_model` in `config/settings.yaml` (default `claude-opus-5-5`).
