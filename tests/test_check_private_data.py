@@ -32,6 +32,7 @@ def test_private_files_are_blocked_but_examples_are_allowed() -> None:
         "profile/resume_Example_2026.pdf",
         ".env",
         "data/job_agent.db",
+        "data/agent-runs.jsonl",
         "reviews/lever-x.html",
         "screenshots/shot.png",
         "dashboard.html",
@@ -43,7 +44,7 @@ def test_private_files_are_blocked_but_examples_are_allowed() -> None:
         "agent/dashboard.py",
     ]
 
-    assert guard.private_paths(staged) == staged[:10]
+    assert guard.private_paths(staged) == staged[:11]
 
 
 def test_workspace_personal_context_is_blocked_but_templates_are_allowed() -> None:

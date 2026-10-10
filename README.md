@@ -53,6 +53,7 @@ flowchart LR
 ```text
 agent/
   main.py, pipeline.py      discovery and the job-run pipeline
+  orchestrator.py           job-run --agent: picks each next step toward a goal of N kits
   filters.py, seniority.py  deterministic scope and duplicate rules
   scorer.py, answers.py     Claude fit scoring and grounded answers
   careers_agent.py          finds the role on the company's own site
@@ -79,16 +80,19 @@ python -m playwright install chromium
 copy .env.example .env               # add ANTHROPIC_API_KEY and RESUME_PATH
 python scripts/install_hooks.py      # privacy guard
 job-run                              # discover, score, prepare, open the dashboard
+job-run --agent --goal 5             # let the agent pick each step until 5 kits are ready
 job-daily --install                  # prepare new jobs every morning before 9am Eastern
 ```
 
 `job-daily --install` registers a morning run with Windows Task Scheduler (or cron on macOS and Linux). It finds and scores new jobs, then builds a tailored resume and every answer for each good match, so they are waiting in the dashboard by `daily_run.ready_by` in [config/settings.yaml](config/settings.yaml). The log is in `data/daily-run.log`.
 
+`job-run --agent --goal N` hands the run to one orchestrator agent. It sees the current counts, what you applied to and removed, and its last few runs, then picks its own next step (score, find new jobs, read a form, build a kit) until N kits are ready with no problems. The filters, the candidate list, and every budget stay in code, and it has no way to submit. Each run's steps, times, and token use are appended to `data/agent-runs.jsonl` (git-ignored). See [specs/009-orchestrator-agent.md](specs/009-orchestrator-agent.md).
+
 Put your private profile in `profile/profile.yaml` (see the fictional [profile.example.yaml](profile/profile.example.yaml)). Put your master CV (every job, project, and activity) at `profile/master_cv.pdf`, or set `MASTER_CV_PATH` in `.env`; the resume at `RESUME_PATH` is the format example, or set `RESUME_FORMAT_PATH`. Put your long list of jobs, projects, and activities (any Markdown, text, PDF, or Word files) in `profile/library/`, and samples of your own writing in `profile/writing_samples/`. All three are git-ignored and blocked by the privacy hook. The scope, models, and caps are set in [config/settings.yaml](config/settings.yaml).
 
 | Command | What it does |
 | --- | --- |
-| `job-run` | Full pipeline: discovery, fit scoring, company page lookup, answer preparation, dashboard |
+| `job-run` | Full pipeline: discovery, fit scoring, company page lookup, answer preparation, dashboard; `--agent --goal N` lets the orchestrator agent pick the steps |
 | `job-agent` | Discovery only |
 | `job-apply` | Fill a Greenhouse, Lever, Ashby, or SmartRecruiters form (dry run; `--hand-off`, `--assist`, `--live`) |
 | `job-agent-fill` | Run the form agent on any other application form |
