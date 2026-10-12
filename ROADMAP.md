@@ -5,6 +5,10 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **Orchestrator agent.** `job-run --agent --goal N`: one agent with a goal, the existing
+  modules as tools, memory of past decisions and runs, and a run log with steps, time, and
+  token use. Hard filters and budgets stay in code; there is no submit tool (Oct 10, 2026).
+  Spec: [specs/009-orchestrator-agent.md](specs/009-orchestrator-agent.md).
 - **Qualification map for every job.** For each posting, a table of every required and
   preferred qualification and every duty, word for word, with the resume bullet that hits
   each one, the source it was written from, and the gaps. First step toward making Job

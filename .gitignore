@@ -29,7 +29,8 @@
 /playwright/.auth/
 /auth/
 
-# Local databases and runtime state
+# Local databases and runtime state (data/ also holds the agent's run log)
+/data/
 *.db
 *.sqlite
 *.sqlite3

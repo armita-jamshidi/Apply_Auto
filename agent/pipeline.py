@@ -377,12 +377,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--profile", type=Path, default=PROFILE_PATH)
     parser.add_argument("--no-open", action="store_true", help="Do not open the dashboard")
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Let the orchestrator agent pick each step toward --goal kits (see the README).",
+    )
+    parser.add_argument(
+        "--goal",
+        type=int,
+        default=5,
+        metavar="N",
+        help="With --agent: how many strong kits to have ready (default 5).",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run discovery, scoring, and preparation, then refresh and open the dashboard."""
     args = build_parser().parse_args(argv)
+    if args.agent:
+        return run_with_agent(args)
     if not args.skip_discovery:
         discover(["--no-dashboard"] + (["--no-new-grad-list"] if args.no_new_grad_list else []))
     else:
@@ -428,6 +442,22 @@ def main(argv: list[str] | None = None) -> int:
         ready = sum(code in (0, 2) for code in outcomes.values())
         print(f"\nPrepared answers for {ready} of {len(outcomes)} jobs.")
 
+    if not args.no_open:
+        return serve_dashboard(DEFAULT_PORT, open_browser=True)
+    dashboard = refresh_dashboard()
+    if dashboard is not None:
+        print(f"Dashboard: {dashboard}")
+    return 0
+
+
+def run_with_agent(args: argparse.Namespace) -> int:
+    """job-run --agent: the orchestrator picks each step, then the dashboard opens."""
+    from agent.orchestrator import Goal, run_agent
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    settings = load_settings()
+    goal = Goal(kits=max(1, args.goal), max_scores=max(0, args.score_limit))
+    run_agent(settings, load_profile(args.profile), goal)
     if not args.no_open:
         return serve_dashboard(DEFAULT_PORT, open_browser=True)
     dashboard = refresh_dashboard()
