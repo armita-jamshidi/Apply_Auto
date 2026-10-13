@@ -13,3 +13,5 @@ def isolated_database_and_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("agent.library.WRITING_DIR", tmp_path / "writing_samples")
     # Discovery would otherwise download the public new-grad list and every board on it.
     monkeypatch.setattr("agent.main.fetch_new_grad_companies", lambda **_kwargs: [])
+    # The resume sources would otherwise read your GitHub repositories.
+    monkeypatch.setattr("agent.github_evidence.github_user", lambda *_args: None)

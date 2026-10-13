@@ -10,7 +10,7 @@ Use the project command; it grounds every answer in the user's sources.
 - One or a few questions (prints answers, saves nothing):
   `job-kit --job-id <id> --question "Tell us about a technical project" --question "Why Acme?"`
 - Every question for the job, saved to the dashboard's Apply panel:
-  `job-kit --job-id <id> --no-questions --answers-only`
+  `job-kit --job-id <id> --answers-only`
   This covers the questions recorded from the job's form plus why-this-company,
   why-this-role, and a technical project.
 
