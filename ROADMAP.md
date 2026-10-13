@@ -5,6 +5,11 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **The resume agent finds skill evidence itself.** No console questions about missing
+  skills: the agent searches the master CV, the experience bank, and the candidate's public
+  GitHub repositories, and treats "LangGraph or LangChain" as one requirement met by either.
+  What it cannot find is listed as a gap (Oct 13, 2026).
+  Spec: [specs/010-agent-finds-skill-evidence.md](specs/010-agent-finds-skill-evidence.md).
 - **Orchestrator agent.** `job-run --agent --goal N`: one agent with a goal, the existing
   modules as tools, memory of past decisions and runs, and a run log with steps, time, and
   token use. Hard filters and budgets stay in code; there is no submit tool (Oct 10, 2026).

@@ -11,14 +11,16 @@ first: `.\.venv312\Scripts\Activate.ps1` (or call `.venv312/Scripts/python.exe -
 1. Find the job id (skip if the user gave one):
    `job-kit --list` prints `id | fit | kit | company | title`, best fit first. Match the
    company/title the user named.
-2. Build the kit, non-interactively (you cannot answer the console's questions):
-   `job-kit --job-id <id> --no-questions`
+2. Build the kit: `job-kit --job-id <id>` (it asks nothing; do not pass `--ask`).
    It runs two sub-agents: the answers sub-agent (every question on the job's form plus
    why-this-company, why-this-role, and a technical project) and the resume sub-agent
-   (Word resume from `profile/library/`, using the job's exact keywords). It prints how many
-   questions were answered, the resume path (`kits/job-<id>/...docx`), and a keyword report.
-3. If the report lists keywords with "No evidence in your documents", ask the user in chat
-   how they used each one (which project or job). For each answer, append to
+   (Word resume from the master CV, the resume, `profile/library/`, and the user's public
+   GitHub repositories, using the job's exact keywords). It prints how many questions were
+   answered, the resume path (`kits/job-<id>/...docx`), and a keyword report.
+3. Keywords under "No evidence in your documents" are gaps: no document or GitHub repository
+   shows them. When the posting accepts either of two ("LangGraph or LangChain"), one found
+   is enough and the gap is listed once. Report gaps; do not ask the user about each one.
+   Only if the user volunteers how they used one, append to
    `profile/library/keyword_answers.md`:
 
    ```
@@ -26,7 +28,7 @@ first: `.\.venv312\Scripts\Activate.ps1` (or call `.venv312/Scripts/python.exe -
    <keyword>: <the user's answer, in their words>
    ```
 
-   Then rerun only the resume: `job-kit --job-id <id> --no-questions --resume-only`.
+   Then rerun only the resume: `job-kit --job-id <id> --resume-only`.
    Never write a keyword answer the user did not give.
 4. Tell the user: the resume path, keywords used / not used, and that the dashboard's Apply
    panel (`job-dashboard`, click **Apply** on the job) shows every answer with Copy buttons

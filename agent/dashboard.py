@@ -1345,9 +1345,9 @@ def make_handler(
             self._json(
                 200,
                 {
-                    "message": "Preparing your resume and answers in a new window. It may ask "
-                    "there how you used a skill the job wants; answer or press Enter to skip. "
-                    "This panel updates when it finishes."
+                    "message": "Preparing your resume and answers in a new window. Skills "
+                    "the job wants that none of your documents or GitHub repositories show are "
+                    "listed as gaps. This panel updates when it finishes."
                 },
             )
 

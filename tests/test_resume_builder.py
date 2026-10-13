@@ -162,8 +162,10 @@ def test_a_missing_or_unreadable_file_falls_back_and_says_so(
 
     assert sources.master_cv_text == ""
     assert sources.layout.font == "Arial"
-    assert sources.notes == ("No master CV at missing.pdf: the resume and library are the only "
-                             "sources.",)
+    assert sources.notes[0] == (
+        "No master CV at missing.pdf: the resume and library are the only sources."
+    )
+    assert sources.github_documents == ()  # no GitHub user in tests
 
 
 class FakeClient:

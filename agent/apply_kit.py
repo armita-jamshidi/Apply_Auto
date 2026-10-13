@@ -3,12 +3,15 @@
 - The answers sub-agent (agent/answer_agent.py) answers every question on the job's form,
   plus the questions nearly every application asks, for this company and role.
 - The resume sub-agent (agent/resume_tailor.py) builds a resume around the job
-  description's exact keywords from the resume and the experience bank in profile/library/.
+  description's exact keywords from the resume, the master CV, the experience bank in
+  profile/library/, and your public GitHub repositories.
 
-The answers run in the background while the resume sub-agent may ask, in this console, how
-you used a keyword your documents never mention. The kit is saved as an attempt of kind
-"kit" (answers, drafts, notes, and the resume's path) so the dashboard's Apply panel shows
-it, with the Word resume under kits/job-<id>/ (git-ignored). Nothing is submitted.
+Nothing is asked by default: a keyword with no evidence in any of those is left off the
+resume and listed as a gap in the kit. With --ask, the resume sub-agent asks in this console
+how you used each such keyword instead. The answers run in the background. The kit is saved
+as an attempt of kind "kit" (answers, drafts, notes, and the resume's path) so the
+dashboard's Apply panel shows it, with the Word resume under kits/job-<id>/ (git-ignored).
+Nothing is submitted.
 """
 
 import argparse
@@ -122,6 +125,7 @@ def build_kit(
                 ask=ask,
                 master_cv_text=sources.master_cv_text,
                 layout=sources.layout,
+                github_documents=sources.github_documents,
             )
             resume.notes = [*sources.notes, *resume.notes]
             folder = kit_folder(job.id)
@@ -288,10 +292,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", type=Path, help="Defaults to RESUME_PATH")
     parser.add_argument("--profile", type=Path, default=PROJECT_ROOT / "profile" / "profile.yaml")
     parser.add_argument(
-        "--no-questions",
+        "--ask",
         action="store_true",
-        help="Do not ask about missing keywords; list them as gaps instead.",
+        help=(
+            "Ask in this console about keywords no document or GitHub repository mentions. "
+            "Without it they are listed as gaps."
+        ),
     )
+    # The default now; kept so older commands still run.
+    parser.add_argument("--no-questions", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--resume-only", action="store_true", help="Only tailor the resume.")
     parser.add_argument("--answers-only", action="store_true", help="Only answer questions.")
     return parser
@@ -339,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                 client=_create_client(),
                 answer_model=settings.anthropic_model,
                 resume_model=settings.resume_tailor_model,
-                ask=None if args.no_questions else ask_in_console,
+                ask=ask_in_console if args.ask and not args.no_questions else None,
                 make_resume=not args.answers_only,
                 sources=sources,
                 make_answers=not args.resume_only,

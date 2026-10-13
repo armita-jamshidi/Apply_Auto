@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from agent.library import LibraryDocument
 from agent.settings import PROJECT_ROOT
 
 LOGGER = logging.getLogger(__name__)
@@ -102,11 +103,13 @@ DEFAULT_FORMAT = ResumeFormat()
 
 @dataclass(frozen=True)
 class ResumeSources:
-    """The master CV's text and the format to copy, as the resume builder uses them."""
+    """The master CV's text, the format to copy, and the candidate's GitHub repositories, as
+    the resume builder uses them."""
 
     master_cv_text: str = ""
     layout: ResumeFormat = field(default_factory=ResumeFormat)
     notes: tuple[str, ...] = ()
+    github_documents: tuple[LibraryDocument, ...] = ()
 
 
 def read_format(path: Path) -> ResumeFormat:
@@ -166,9 +169,11 @@ def read_format(path: Path) -> ResumeFormat:
 
 
 def load_resume_sources() -> ResumeSources:
-    """The master CV and the format example named in .env, or the defaults, with notes."""
+    """The master CV and the format example named in .env, or the defaults, and the
+    candidate's public GitHub repositories (see agent.github_evidence), with notes."""
     from agent.applier.cli import default_resume_path
     from agent.applier.greenhouse import extract_resume_text
+    from agent.github_evidence import github_user, load_github_documents
 
     load_dotenv(PROJECT_ROOT / ".env")
     notes: list[str] = []
@@ -192,9 +197,16 @@ def load_resume_sources() -> ResumeSources:
             notes.append(f"Used the default format: {error}")
     else:
         notes.append(f"No format example at {_shown(example)}: used the default format.")
+    github: list[LibraryDocument] = []
+    user = github_user()
+    if user is None:
+        notes.append("No GitHub user (GITHUB_USERNAME or personal.github): repos not searched.")
+    else:
+        github = load_github_documents(user)
+        notes.append(f"Searched {len(github)} public GitHub repositories for evidence.")
     for note in notes:
         LOGGER.info(note)
-    return ResumeSources(master_text, layout, tuple(notes))
+    return ResumeSources(master_text, layout, tuple(notes), tuple(github))
 
 
 def _role(line: str) -> str | None:
