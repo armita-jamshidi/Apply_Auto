@@ -8,6 +8,133 @@
 
 Job Agent is a privacy-conscious job search assistant. It finds AI and agent engineering roles that are US-remote or in North Carolina, and scores each one against a private candidate profile. It prepares a grounded answer for every application question and fills in the forms. The candidate reviews every application and submits it.
 
+## What I Built
+
+A summary of the project, from build to debugging to measurement. Figures come from the
+repository and from my local job database.
+
+### Impact
+
+- **Applied to 28 jobs at 26 companies** (Oct 3 to Oct 16, 2026), counted from the jobs
+  marked applied in my local database.
+- **Saved about 30 minutes per application** by generating a tailored one-page resume and an
+  answer to every application question for each job. That is about 14 hours across the 28
+  applications.
+- **Saved at least 1 hour a day of job searching.** A scheduled morning run finds, filters,
+  and scores new roles that match my location, role type, and experience level, so they are
+  waiting in the dashboard by 9am Eastern.
+
+### Build
+
+- **Built a job search agent in Python (about 15,000 lines)** that discovers AI and agent
+  engineering roles from 8 sources: the Greenhouse, Lever, Ashby, and SmartRecruiters job
+  board APIs, We Work Remotely (RSS), Hacker News "Who is hiring?", the Himalayas job API,
+  and the public SimplifyJobs new-grad list.
+- **Wrote deterministic filters** for title, seniority, required years of experience (2 or
+  fewer), location (US-remote or North Carolina), posting age, duplicates, and at most three
+  roles per company, so the model only sees jobs that pass hard rules.
+- **Built six model-driven components on the Anthropic Claude API** (Sonnet 5.5 and Opus
+  5.5): a fit scorer, a careers agent, a form agent, a library agent, a resume sub-agent,
+  and an answers sub-agent. They use tool use, structured outputs validated with Pydantic,
+  the web search tool, and a fallback model on refusals.
+- **Built an orchestrator agent** (`job-run --agent --goal N`) that runs a tool-use loop over
+  the pipeline's modules (find jobs, check company pages, score, read a form, build a kit)
+  and picks each next step toward a goal of N ready kits. It remembers which jobs I applied
+  to or removed. Filters and budgets stay in code, and it has no submit tool.
+- **Built a resume sub-agent** that rebuilds a one-page Word resume (python-docx) for each
+  posting from a master CV, using the posting's exact keywords. It maps every required and
+  preferred qualification, copied word for word, to the bullet that covers it. It searches
+  my public GitHub repositories (READMEs and dependency files) for skill evidence before it
+  calls a skill missing, and treats "X or Y" requirements as one requirement.
+- **Automated browser form filling with Playwright** for Greenhouse, Lever, Ashby, and
+  SmartRecruiters, plus an agent for unfamiliar forms (Workday, iCIMS, Zoho, custom sites)
+  that reads controls inside iframes and works through multi-page applications.
+- **Built a local dashboard** on the standard-library HTTP server (HTML, CSS, JavaScript)
+  that lists each job with its fit score and posting age. Its Apply sidebar shows every
+  answer with Copy buttons and the tailored resume to download.
+- **Stored jobs and applications with SQLAlchemy 2** on SQLite (or PostgreSQL 16 in Docker
+  Compose), with 8 Alembic schema migrations.
+- **Scheduled a daily run** with Windows Task Scheduler (cron on macOS and Linux) that
+  prepares kits for new matches before 9am Eastern.
+- **Kept personal data out of a public repository** with a custom Git pre-commit hook that
+  blocks private files and any line containing values from my local profile.
+
+### Debugging
+
+- **Checked model claims in code.** The careers agent once reported a role from a search
+  result it never opened, and once reported a list of openings as the role. Code now
+  requires the job title to appear on a page the agent opened.
+- **Fixed a race in multi-threaded fit scoring.** One job in three failed because worker
+  threads shared a database session. Reading job fields before the threads start fixed it.
+- **Fixed the form agent missing questions** on later pages, inside iframes, and past a
+  control limit. It now records every question it sees, and it is sent back if it tries to
+  finish while a Next button remains.
+- **Diagnosed why no new jobs were showing up.** My local copy was 57 commits behind `main`,
+  so the newer filters and the morning run had never reached it. I tested the current
+  filters against all 195 saved jobs to confirm the code on `main` worked.
+- **Shipped 13 bug-fix commits** alongside 24 feature commits and 15 merged pull requests,
+  adding tests for the fixed behavior as I went.
+
+### Measurement and Evaluation
+
+- **Wrote a 534-test pytest suite** that runs fully offline: HTTP calls, the Anthropic SDK,
+  and the database are mocked, and form tests drive a real headless Chromium against local
+  HTML forms, including multi-page forms and iframes.
+- **Ran CI on GitHub Actions** on every push and pull request: Ruff linting, then pytest
+  with the Playwright browser installed.
+- **Logged each orchestrator run** to a JSONL file with every step, its time, and token use
+  (input, output, and prompt-cache reads and writes), to measure cost and speed per kit.
+- **Verified model output in code instead of trusting it.** Every resume bullet and written
+  answer must quote its source, and code checks each quote. Code rejects any tool or number
+  the sources don't support.
+- **Scored fit with a 0 to 100 rubric** and a threshold of 70, using structured outputs so
+  each score is machine-checked.
+
+### Technical Challenge: the blank browser window
+
+Pressing **Fill with agent** on the dashboard opened a Chrome window showing only
+`about:blank`, and the agent never filled anything. The console window closed as soon as
+the program ended, so there was no error to read.
+
+I worked through it in rounds, one cause at a time
+([specs/005](specs/005-fill-with-agent-blank-window.md)):
+
+1. **Made the error visible.** Errors now stay on screen until Enter is pressed, and the
+   window shows which page it is opening right away.
+2. **Found the main cause:** Chrome allows one browser per profile. When an earlier agent
+   window was still open, the new launch handed its blank tab to the old window and exited.
+   The dashboard now checks whether the profile is in use and says to close the old window
+   first. I tested the lock with full Chromium, the same browser the hand-off uses.
+3. **The window then opened behind the dashboard.** Windows does not let a background
+   program bring its window to the front, so the agent minimizes and restores its window
+   and moves it onto the main screen.
+4. **The form then could not scroll to the bottom.** Playwright draws every page at a fixed
+   1280x720, so a smaller window cut off the form. Opening the browser with
+   `no_viewport=True` lets the page fit the window.
+
+What I learned: when a failure leaves no trace, make it leave one first, then fix one
+cause at a time and test each fix in the real environment.
+
+### What I Learned
+
+- **Agent design:** when to use a fixed pipeline and when to let a model pick the next step,
+  and how to keep hard rules, budgets, and the final submit decision in code.
+- **The Anthropic Claude API:** tool use loops, structured outputs, the server-side web
+  search tool, token accounting, refusal handling with a fallback model, and choosing
+  Sonnet or Opus for each task.
+- **Grounding and verification:** making a model quote its sources and checking those
+  quotes in code, so it cannot invent facts on a resume.
+- **Browser automation with Playwright:** iframes, multi-page forms, browser profiles and
+  their locks, viewports, and window focus on Windows.
+- **Data and backend:** SQLAlchemy 2, Alembic migrations, SQLite and PostgreSQL, and
+  thread safety with database sessions.
+- **Testing and CI:** offline tests with mocked APIs, headless browser tests, and GitHub
+  Actions.
+- **Working with an AI coding agent:** building with Claude Code through specs, small pull
+  requests, and code review, with a roadmap and a written review checklist.
+- **Privacy engineering:** keeping personal data out of a public repository with
+  git-ignored paths and a pre-commit hook.
+
 ## Highlights
 
 - **Discovery across many sources.** It reads Greenhouse, Lever, Ashby, and SmartRecruiters boards through their public APIs, plus We Work Remotely, Hacker News "Who is hiring?", and Himalayas. Companies are also found automatically from the SimplifyJobs list. Rule-based filters keep only roles that match on title, seniority, years required (roles open to recent graduates or needing at most 2 years), location, and posting age, duplicates are removed, and only the top three matches per company are kept (`max_jobs_per_company`). Jobs already found are checked again on every run, after the company's own page fills in the full description.
@@ -32,7 +159,9 @@ Job Agent is a privacy-conscious job search assistant. It finds AI and agent eng
 | HTTP and documents | httpx, pypdf, python-docx (tailored resumes), PyYAML, python-dotenv |
 | Web UI | Standard-library `http.server`, HTML, CSS, JavaScript |
 | Quality | pytest (offline: mocked HTTP and SDK, real headless browser), Ruff, GitHub Actions CI |
-| Infrastructure | Docker Compose (optional Postgres), Git pre-commit hook |
+| Infrastructure | Docker Compose (optional Postgres), Git pre-commit hook, Windows Task Scheduler or cron for the morning run |
+| Job sources | Greenhouse, Lever, Ashby, and SmartRecruiters board APIs; We Work Remotely RSS; Hacker News "Who is hiring?"; Himalayas API; SimplifyJobs new-grad list; GitHub REST API for skill evidence |
+| Development tools | Claude Code (AI coding agent for specs, pull requests, and fixes), Git and GitHub pull requests, Notion for task tracking, PowerShell on Windows |
 
 Dependency ranges are in [pyproject.toml](pyproject.toml). The tested versions are anthropic 0.125, playwright 1.63, SQLAlchemy 2.1, alembic 1.20, pydantic 2.13, httpx 0.28, pytest 8.4, and ruff 0.16.
 
