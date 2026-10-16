@@ -28,6 +28,9 @@ from agent.resume_tailor import (
     write_docx,
 )
 
+# These tests' fictional entries have one fact each; see the fixture.
+pytestmark = pytest.mark.usefixtures("one_bullet_entries")
+
 # A fictional one-page resume: name, contact, then headings and body lines.
 FORMAT_LINES = [
     ("Helvetica-Bold", 16, "Jordan Example"),

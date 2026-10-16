@@ -17,7 +17,10 @@ Every step is checked in code:
   replaced by the original wording);
 - a skill is listed only when a candidate document mentions it.
 - at most four jobs and three projects are kept, the first of each kind in the draft's
-  most-relevant-first order, so the resume has a few full entries, not many thin ones.
+  most-relevant-first order, each with at least two bullets, so the resume has a few full
+  entries, not many thin ones; a draft that fills too little of the page is sent back once;
+- the current job (dates ending in "Present") and the entries in profile.yaml's
+  resume.always_include are on every resume, with the bullets the profile names.
 
 Before a keyword counts as missing, the agent looks for it everywhere the candidate has
 written about their work: the resume, the master CV, the experience bank, and the candidate's
@@ -58,11 +61,14 @@ from agent.seniority import _plain_text
 
 LOGGER = logging.getLogger(__name__)
 KEYWORD_ANSWERS = "keyword_answers.md"
-MAX_ENTRIES = 6
+MAX_ENTRIES = 8
 # Caps per kind, so the resume has a few full entries rather than many thin ones. The draft
 # lists entries most relevant first, so the first ones of each kind are kept.
 MAX_PER_KIND = {"experience": 4, "project": 3}
-MIN_BULLETS = 2  # page trimming keeps this many bullets per entry until it must drop one
+MIN_BULLETS = 2  # every entry has at least this many; trimming drops an entry instead
+FILL_TARGET = 0.9  # a draft filling less of the page (estimated) is sent back once for more
+# Dates like "2024 - Present" mark the current job, which is on every resume.
+CURRENT = re.compile(r"\b(present|current|now)\b", re.IGNORECASE)
 MASTER_CV = "master_cv"  # doc_id of the master CV among the sources
 # Word layout: the format's font and body size, then half a point smaller at a time to fit
 # one page, never below MIN_FONT_SIZE.
@@ -278,9 +284,11 @@ pool that best fit the job (at most {max_entries}, most relevant first) under th
 {headings}. Use at most {max_experiences} jobs (kind "experience") and at most {max_projects}
 projects (kind "project", GitHub repositories included). The pool comes mostly from the master
 CV; an entry is not better because it was on the old one-page resume, so pick only by fit to
-this job. Write 3-4 bullets for each entry: a few entries with full bullets are better than
-many entries with one bullet each, so leave out a weak entry rather than keep it thin. The
-resume must fit on one page, so keep bullets short.
+this job. Every entry in always_include must be on the resume, with a bullet keeping each of
+its keep_facts (those facts' words and numbers). Write 3-4 bullets for each entry, never fewer
+than 2: a few entries with full bullets are better than many entries with one bullet each, so
+leave out a weak entry rather than keep it thin. The resume must fill one page: choose enough
+entries and bullets to fill it; code trims the lowest-value bullets if it runs over.
 
 Use the job's keywords exactly as written (same spelling and casing) wherever the candidate's
 sources truthfully support them; when a source names the same tool another way ("Postgres"
@@ -316,6 +324,66 @@ class Entry:
     doc_id: str = "resume"
     facts: list[str] = field(default_factory=list)
     bullets: list[str] = field(default_factory=list)
+    pinned: bool = False  # always on the resume: never left out or trimmed away
+    locked: list[str] = field(default_factory=list)  # bullets trimming never removes
+
+
+@dataclass
+class Pin:
+    """An entry that is on every resume (matched by organization or title), and phrases of
+    the bullets it always keeps, from profile.yaml's resume.always_include."""
+
+    entry: str
+    bullets: list[str] = field(default_factory=list)
+
+
+def resume_pins(profile: Mapping[str, Any]) -> list[Pin]:
+    """The profile's always-included entries:
+
+    resume:
+      always_include:
+        - entry: Example Systems
+          bullets: ["900 interviews"]  # a phrase from each fact to keep, as in your CV
+    """
+    section = profile.get("resume") or {}
+    raw = section.get("always_include") if isinstance(section, Mapping) else None
+    pins = []
+    for item in raw or []:
+        if isinstance(item, str):
+            item = {"entry": item}
+        if not isinstance(item, Mapping) or not str(item.get("entry") or "").strip():
+            continue
+        bullets = [str(b).strip() for b in item.get("bullets") or [] if str(b).strip()]
+        pins.append(Pin(str(item["entry"]).strip(), bullets))
+    return pins
+
+
+def pinned_entries(
+    pool: Mapping[str, Entry], pins: Sequence[Pin]
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Entry ids always on the resume, each with the bullet phrases it must keep, and notes.
+
+    The current job (dates ending in "Present") is always pinned; pins add entries and the
+    phrases of bullets to keep.
+    """
+    pinned: dict[str, list[str]] = {
+        entry_id: []
+        for entry_id, entry in pool.items()
+        if entry.kind == "experience" and CURRENT.search(entry.dates)
+    }
+    notes = []
+    for pin in pins:
+        key = _squash(pin.entry)
+        found = [
+            entry_id
+            for entry_id, entry in pool.items()
+            if key and key in {_squash(entry.organization), _squash(entry.title)}
+        ]
+        if not found:
+            notes.append(f"Could not find {pin.entry!r}, set to always include, in your documents.")
+        for entry_id in found:
+            pinned.setdefault(entry_id, []).extend(pin.bullets)
+    return pinned, notes
 
 
 @dataclass
@@ -417,12 +485,14 @@ def tailor_resume(
     master_cv_text: str = "",
     layout: ResumeFormat = DEFAULT_FORMAT,
     github_documents: Sequence[LibraryDocument] = (),
+    pins: Sequence[Pin] = (),
 ) -> TailoredResume:
     """Build a resume for one job; see the module docstring.
 
     master_cv_text is the master CV every entry may come from; layout is the format to copy;
     github_documents are the candidate's repositories (agent.github_evidence), of which those
-    naming the job's keywords are searched.
+    naming the job's keywords are searched; pins are the entries always included
+    (resume_pins), beside the current job.
     """
     description = " ".join(_plain_text(job.get("description", "")).split())
     if not description:
@@ -440,6 +510,7 @@ def tailor_resume(
     repositories = relevant_repositories(github_documents, keywords)
     documents = sources()
     name, contact, education, pool = build_pool(documents, client=client, model=model)
+    pinned, pin_notes = pinned_entries(pool, pins)
     missing, covered = find_missing(keywords, documents)
     suggestions = (
         suggest_bullets(missing, keywords, pool, documents, client=client, model=model)
@@ -471,11 +542,13 @@ def tailor_resume(
         model=model,
         max_entries=max_entries,
         layout=layout,
+        pinned=pinned,
+        header=(name, contact, education),
     )
     resume = TailoredResume(
         name, contact, education, sections, skills, keywords, gaps=gaps, layout=layout
     )
-    resume.notes = notes
+    resume.notes = [*pin_notes, *notes]
     resume.suggestions = unconfirmed
     titles = {doc.doc_id: doc.title for doc in documents}
     resume.sources = {
@@ -766,6 +839,8 @@ def _tailor(
     model: str,
     max_entries: int,
     layout: ResumeFormat = DEFAULT_FORMAT,
+    pinned: Mapping[str, list[str]] | None = None,
+    header: tuple[str, list[str], list[str]] = ("", [], []),
 ) -> tuple[
     list[tuple[str, list[Entry]]],
     list[tuple[str, list[str]]],
@@ -773,9 +848,11 @@ def _tailor(
     dict[str, list[tuple[str, str]]],
 ]:
     """Ask for the tailored resume, verify it, send problems back once, keep what verifies.
+    A draft that fills too little of the page is sent back once for more.
 
     Also returns each kept bullet's quotes, as (doc_id, quote) pairs.
     """
+    pinned = pinned or {}
     by_id = {doc.doc_id: doc for doc in documents}
     request = json.dumps(
         {
@@ -804,6 +881,17 @@ def _tailor(
                 }
                 for entry in pool.values()
             ],
+            "always_include": [
+                {
+                    "entry_id": entry_id,
+                    "keep_facts": [
+                        fact
+                        for fact in pool[entry_id].facts
+                        if any(_squash(phrase) in _squash(fact) for phrase in phrases)
+                    ],
+                }
+                for entry_id, phrases in pinned.items()
+            ],
             "documents": [{"doc_id": doc.doc_id, "text": doc.text} for doc in documents],
         }
     )
@@ -828,7 +916,24 @@ def _tailor(
             },
         ]
         draft = _structured_turn(client, model, system, messages, TAILOR_SCHEMA)
-    return _keep_verified(draft, keywords, pool, by_id, documents, max_entries, layout)
+    kept = _keep_verified(draft, keywords, pool, by_id, documents, max_entries, layout, pinned)
+    fill = page_fill(TailoredResume(*header, kept[0], kept[1], keywords, layout=layout))
+    if fill >= FILL_TARGET:
+        return kept
+    messages += [
+        {"role": "assistant", "content": json.dumps(draft)},
+        {
+            "role": "user",
+            "content": f"The resume fills only about {fill:.0%} of the page. Fill it: give "
+            "entries with fewer than 4 bullets more bullets, or add the next most relevant "
+            "entries within the limits, with the same source rules. Return the whole resume.",
+        },
+    ]
+    fuller = _structured_turn(client, model, system, messages, TAILOR_SCHEMA)
+    more = _keep_verified(fuller, keywords, pool, by_id, documents, max_entries, layout, pinned)
+    bullets = sum(len(entry.bullets) for _heading, entries in more[0] for entry in entries)
+    before = sum(len(entry.bullets) for _heading, entries in kept[0] for entry in entries)
+    return more if bullets > before else kept
 
 
 def _problems(
@@ -882,53 +987,95 @@ def _keep_verified(
     all_documents: list[LibraryDocument],
     max_entries: int,
     layout: ResumeFormat = DEFAULT_FORMAT,
+    pinned: Mapping[str, list[str]] | None = None,
 ) -> tuple[
     list[tuple[str, list[Entry]]],
     list[tuple[str, list[str]]],
     list[str],
     dict[str, list[tuple[str, str]]],
 ]:
+    pinned = pinned or {}
     grouped: dict[str, list[Entry]] = {heading: [] for heading in layout.entry_headings}
     notes: list[str] = []
     sources: dict[str, list[tuple[str, str]]] = {}
     used: set[str] = set()
     seen: set[tuple[str, str]] = set()  # one role listed in two documents goes in once
     per_kind: dict[str, int] = {}
-    for section in draft.get("sections") or []:
-        for item in section.get("entries") or []:
-            source = pool.get(str(item.get("entry_id")))
-            if source is None or source.entry_id in used or len(used) >= max_entries:
-                continue
-            same = (source.title.casefold(), source.organization.casefold())
-            if same in seen:
-                continue
-            cap = MAX_PER_KIND.get(source.kind)
-            if cap is not None and per_kind.get(source.kind, 0) >= cap:
-                noun = "jobs" if source.kind == "experience" else f"{source.kind}s"
-                notes.append(f"Left out {source.title}: the resume already has {cap} {noun}.")
-                continue
-            per_kind[source.kind] = per_kind.get(source.kind, 0) + 1
-            used.add(source.entry_id)
-            seen.add(same)
-            bullets = []
-            for bullet in item.get("bullets") or []:
-                problem = bullet_problem(bullet, keywords, documents)
-                if problem is None:
-                    text = " ".join(str(bullet["text"]).split())
-                    bullets.append(text)
-                    sources[text] = [
-                        (str(item.get("doc_id", "")), str(item.get("quote", "")))
-                        for item in bullet.get("evidence") or []
-                    ]
-                else:
-                    notes.append(f"Dropped a bullet for {source.title}: {problem}")
-            if not bullets:
-                # Nothing verified: keep the candidate's own wording.
-                bullets = source.facts[:3]
-                sources.update({fact: [(source.doc_id, fact)] for fact in bullets})
-                notes.append(f"{source.title}: kept your original wording.")
-            # Each entry goes under the format's heading for its kind, whatever the draft used.
-            grouped[layout.heading_for_kind(source.kind)].append(replace(source, bullets=bullets))
+    items = [
+        item for section in draft.get("sections") or [] for item in section.get("entries") or []
+    ]
+    drafted: dict[str, Mapping[str, Any]] = {}
+    for item in items:
+        drafted.setdefault(str(item.get("entry_id")), item)
+    # Pinned entries first, so no cap or limit can leave them out; then the draft's order.
+    order = [*pinned, *(entry_id for entry_id in drafted if entry_id not in pinned)]
+    for entry_id in order:
+        source, item = pool.get(entry_id), drafted.get(entry_id, {})
+        is_pinned = entry_id in pinned
+        if source is None or entry_id in used or (len(used) >= max_entries and not is_pinned):
+            continue
+        same = (source.title.casefold(), source.organization.casefold())
+        if same in seen:
+            continue
+        cap = MAX_PER_KIND.get(source.kind)
+        if cap is not None and per_kind.get(source.kind, 0) >= cap and not is_pinned:
+            noun = "jobs" if source.kind == "experience" else f"{source.kind}s"
+            notes.append(f"Left out {source.title}: the resume already has {cap} {noun}.")
+            continue
+        bullets: list[str] = []
+        for bullet in item.get("bullets") or []:
+            problem = bullet_problem(bullet, keywords, documents)
+            if problem is None:
+                text = " ".join(str(bullet["text"]).split())
+                bullets.append(text)
+                sources[text] = [
+                    (str(quote.get("doc_id", "")), str(quote.get("quote", "")))
+                    for quote in bullet.get("evidence") or []
+                ]
+            else:
+                notes.append(f"Dropped a bullet for {source.title}: {problem}")
+        # The candidate's own wording (facts found in their document) fills gaps.
+        facts = [
+            " ".join(fact.split())
+            for fact in source.facts
+            if quote_found(documents, source.doc_id, fact)
+        ]
+
+        def add_fact(fact: str, bullets: list[str] = bullets, source: Entry = source) -> None:
+            bullets.append(fact)
+            sources[fact] = [(source.doc_id, fact)]
+
+        locked = []
+        for phrase in pinned.get(entry_id, []):
+            hit = next((b for b in bullets if _squash(phrase) in _squash(b)), None)
+            if hit is None:
+                hit = next((fact for fact in facts if _squash(phrase) in _squash(fact)), None)
+                if hit is None:
+                    notes.append(f"Could not find {phrase!r} in {source.title}'s facts.")
+                    continue
+                add_fact(hit)
+            locked.append(hit)
+        wanted = 3 if not bullets else MIN_BULLETS
+        added = 0
+        for fact in facts:
+            if len(bullets) >= wanted:
+                break
+            # Skip a fact a kept bullet already says or was written from.
+            quoted = [_squash(quote) for bullet in bullets for _doc, quote in sources[bullet]]
+            if not any(q and (q in _squash(fact) or _squash(fact) in q) for q in quoted):
+                add_fact(fact)
+                added += 1
+        if len(bullets) < MIN_BULLETS and not is_pinned:
+            notes.append(f"Left out {source.title}: it had fewer than {MIN_BULLETS} bullets.")
+            continue
+        if added:
+            notes.append(f"{source.title}: used your original wording for {added} bullet(s).")
+        per_kind[source.kind] = per_kind.get(source.kind, 0) + 1
+        used.add(entry_id)
+        seen.add(same)
+        # Each entry goes under the format's heading for its kind, whatever the draft used.
+        kept = replace(source, bullets=bullets, pinned=is_pinned, locked=locked)
+        grouped[layout.heading_for_kind(source.kind)].append(kept)
     sections = [(heading, entries) for heading, entries in grouped.items() if entries]
     corpus = "\n".join(doc.text for doc in all_documents if doc.doc_id != "job_description")
     skills = []
@@ -1097,11 +1244,18 @@ def _save_docx(resume: TailoredResume, path: Path, size: float) -> None:
 
 
 def _fits(resume: TailoredResume, size: float) -> bool:
-    """Whether the resume's estimated height at this body size fits one page.
+    """Whether the resume's estimated height at this body size fits one page."""
+    return page_fill(resume, size) <= 1
+
+
+def page_fill(resume: TailoredResume, size: float | None = None) -> float:
+    """The share of one page the resume's estimated height takes at this body size (by
+    default the format's own); over 1 means it runs over.
 
     A deliberately cautious estimate: Times New Roman averages under half an em per
     character, so assuming half an em per character overstates how many lines text takes.
     """
+    size = resume.layout.body_size if size is None else size
     text_width = (8.5 - 2 * MARGIN_INCHES) * 72
     text_height = (11 - 2 * MARGIN_INCHES) * 72
 
@@ -1120,14 +1274,15 @@ def _fits(resume: TailoredResume, size: float) -> bool:
             total += ENTRY_BEFORE + height(header, size)
             total += sum(height(bullet, size, BULLET_INDENT) for bullet in entry.bullets)
     total += sum(height(f"{label}: {', '.join(items)}", size) for label, items in resume.skills)
-    return total <= text_height
+    return total / text_height
 
 
 def _trim_one(resume: TailoredResume) -> str | None:
     """Remove the lowest-value bullet from an entry with more than MIN_BULLETS; once none has,
-    the lowest-value entry; once one entry is left, its bullets down to one. Say what went.
-    Value counts the job's keywords a bullet uses, with required qualifications worth most;
-    ties go against later, less relevant entries."""
+    the lowest-value entry. Pinned entries and locked bullets stay, and one entry is always
+    left. Say what went, or None when nothing can go. Value counts the job's keywords a bullet
+    uses, with required qualifications worth most; ties go against later, less relevant
+    entries."""
     required = {term.casefold() for term in resume.keywords.required}
     preferred = {term.casefold() for term in resume.keywords.preferred}
 
@@ -1139,30 +1294,28 @@ def _trim_one(resume: TailoredResume) -> str | None:
                 score += 3 if key in required else 2 if key in preferred else 1
         return score
 
-    def bullets(floor: int) -> list[tuple[int, int, int, int]]:
-        return [
-            (value(bullet), -section, -index, -position)
-            for section, (_title, entries) in enumerate(resume.sections)
-            for index, entry in enumerate(entries)
-            if len(entry.bullets) > floor
-            for position, bullet in enumerate(entry.bullets)
-        ]
-
-    def drop_bullet(candidates: list[tuple[int, int, int, int]]) -> str:
-        _score, section, index, position = min(candidates)
+    bullets = [
+        (value(bullet), -section, -index, -position)
+        for section, (_title, entries) in enumerate(resume.sections)
+        for index, entry in enumerate(entries)
+        if len(entry.bullets) > MIN_BULLETS
+        for position, bullet in enumerate(entry.bullets)
+        if bullet not in entry.locked
+    ]
+    if bullets:
+        _score, section, index, position = min(bullets)
         entry = resume.sections[-section][1][-index]
         entry.bullets.pop(-position)
         return f"dropped a bullet from {entry.title}"
-
-    if candidates := bullets(MIN_BULLETS):
-        return drop_bullet(candidates)
+    total = sum(len(items) for _title, items in resume.sections)
     entries = [
         (value(" ".join(entry.bullets)), -section, -index)
         for section, (_title, items) in enumerate(resume.sections)
         for index, entry in enumerate(items)
+        if not entry.pinned
     ]
-    if len(entries) <= 1:
-        return drop_bullet(candidates) if (candidates := bullets(1)) else None
+    if total <= 1 or not entries:
+        return None
     _score, section, index = min(entries)
     title, items = resume.sections[-section]
     entry = items.pop(-index)
@@ -1430,6 +1583,11 @@ def _exact_spelling(keyword: str, description: str) -> str | None:
         return None
     match = _pattern(keyword).search(description)
     return match.group(0) if match else None
+
+
+def _squash(text: str) -> str:
+    """Letters and digits only, lowercased: "$100K in funding" holds "100k in funding"."""
+    return re.sub(r"[^a-z0-9]", "", text.casefold())
 
 
 def _contains_name(text: str, keyword: str) -> bool:

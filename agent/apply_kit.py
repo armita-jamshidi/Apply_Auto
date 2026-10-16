@@ -81,6 +81,7 @@ def build_kit(
         output_path,
         qualification_map,
         qualification_map_markdown,
+        resume_pins,
         tailor_resume,
         write_docx,
     )
@@ -126,6 +127,7 @@ def build_kit(
                 master_cv_text=sources.master_cv_text,
                 layout=sources.layout,
                 github_documents=sources.github_documents,
+                pins=resume_pins(profile),
             )
             resume.notes = [*sources.notes, *resume.notes]
             folder = kit_folder(job.id)

@@ -15,3 +15,11 @@ def isolated_database_and_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("agent.main.fetch_new_grad_companies", lambda **_kwargs: [])
     # The resume sources would otherwise read your GitHub repositories.
     monkeypatch.setattr("agent.github_evidence.github_user", lambda *_args: None)
+
+
+@pytest.fixture
+def one_bullet_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For tests whose fictional entries have a single fact: allow one-bullet entries and
+    skip the fill-the-page turn. tests/test_entry_caps.py covers both."""
+    monkeypatch.setattr("agent.resume_tailor.MIN_BULLETS", 1)
+    monkeypatch.setattr("agent.resume_tailor.FILL_TARGET", 0.0)
