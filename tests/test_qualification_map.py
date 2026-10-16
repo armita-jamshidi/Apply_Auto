@@ -21,6 +21,9 @@ from agent.resume_tailor import (
 )
 from db.models import Base, Job
 
+# These tests' fictional entries have one fact each; see the fixture.
+pytestmark = pytest.mark.usefixtures("one_bullet_entries")
+
 RESUME = """Jordan Example
 jordan@example.com
 Example State University, B.S. Computer Science, Dec 2025

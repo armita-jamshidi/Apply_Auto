@@ -38,6 +38,15 @@ projects:
       - Python
       - FastAPI
 
+# Tailored resumes always include your current job (dates ending in "Present") and these
+# entries. Under bullets, put a short phrase from each fact to keep on every resume, as your
+# master CV writes it.
+resume:
+  always_include:
+    - entry: Example Systems
+      bullets:
+        - "automated deployment workflows"
+
 education:
   - institution: Example State University
     degree: Bachelor of Science in Computer Science

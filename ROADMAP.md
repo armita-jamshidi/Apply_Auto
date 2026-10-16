@@ -5,6 +5,11 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **At most four jobs and three projects per resume.** The tailored resume keeps only the
+  most relevant four jobs and three projects (GitHub repositories included), each with at
+  least two bullets, fills the page, and always includes the current job with its pinned
+  bullets (Oct 16, 2026).
+  Spec: [specs/011-resume-entry-caps.md](specs/011-resume-entry-caps.md).
 - **The resume agent finds skill evidence itself.** No console questions about missing
   skills: the agent searches the master CV, the experience bank, and the candidate's public
   GitHub repositories, and treats "LangGraph or LangChain" as one requirement met by either.
