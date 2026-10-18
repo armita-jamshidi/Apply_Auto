@@ -121,13 +121,16 @@ is retried on a fallback model, so one refusal does not stop a run.
   citations: the model may only use what it can quote from the master CV, the experience
   bank, the writing samples, or the candidate's public GitHub repositories. Code checks
   every quote against the source text.
-- **LLM-based classification with validation.** Fit scoring is a structured classification
-  task (score, reasons, dealbreakers, action). The threshold of 70 and the score range
-  are enforced in code, not in the prompt.
 - **Tuned per task.** Each agent gets the model that suits it: Opus 5.5 for the form
   agent and resume rewriting, where mistakes are costly; Sonnet 5.5 for scoring,
   answers, search, and orchestration, where speed and cost matter more. The fit
   threshold, kit limits, and per-company caps are all tunable in `config/settings.yaml`.
+- **Multi-class classification with an LLM, plus rule-based post-processing.** Fit
+  scoring sorts each job into one of three classes (apply, skip, or manual review) and
+  gives it a 0-100 score with reasons and dealbreakers, as a structured output. Code then
+  validates the score range and applies the rules: a dealbreaker found in code means
+  skip, a dealbreaker the model found means manual review, and a score under 70 means
+  skip.
 - **Cost and speed tracking.** Each orchestrator run logs every step with its duration and
   its input, output, and prompt-cache token counts, so cost per kit can be measured.
 - **Offline evaluation.** 534 pytest tests run with the Anthropic SDK and every HTTP call
