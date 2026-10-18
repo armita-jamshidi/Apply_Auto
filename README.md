@@ -49,14 +49,18 @@ flowchart LR
     F --> D[(Jobs database)]
     D --> K[Careers agent: finds the role on the company site]
     K --> S[Fit scorer: 0-100 with dealbreakers]
+    S --> FA[Form agent: reads the form's questions, never submits]
     S --> R[Resume sub-agent: one-page tailored resume]
-    S --> A[Answers sub-agent: every question, in your voice]
+    FA --> A[Answers sub-agent: every question, in your voice]
+    A <--> L[Library agent: cited drafts for long answers]
     R --> B[Dashboard: Apply sidebar]
     A --> B
-    O[Orchestrator agent] -.-> F
-    O -.-> K
-    O -.-> S
-    O -.-> R
+    O[Orchestrator] -.->|find_new_jobs| F
+    O -.->|check_company_pages| K
+    O -.->|score_jobs| S
+    O -.->|read_application_form| FA
+    O -.->|build_kit| R
+    O -.->|build_kit| A
     B -->|you review| H[You click Submit]
 ```
 
@@ -67,7 +71,11 @@ flowchart LR
    on the company's own site, so the Apply button goes to the real posting.
 3. **Score.** Claude scores each job from 0 to 100 against the profile, lists dealbreakers,
    and recommends apply or skip. Only jobs scoring 70 or more move on.
-4. **Prepare.** The resume and answers sub-agents build an apply kit for each good match.
+4. **Prepare.** For each good match, a board filler (or the form agent, for unfamiliar
+   sites) opens the application in a headless browser and records every question without
+   submitting. Then the resume and answers sub-agents build the apply kit. For long
+   questions such as "why this company", the answers sub-agent asks the library agent for
+   a draft that quotes the candidate's own writing.
 5. **Hand over.** The dashboard shows each job with its score and a link to the role. Its
    Apply sidebar has every answer with a Copy button and the tailored resume to download.
 
