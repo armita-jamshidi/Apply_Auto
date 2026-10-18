@@ -318,9 +318,8 @@ scripts/                    privacy pre-commit hook
 tests/                      offline test suite
 ```
 
-## Roadmap
+## What's Built
 
 Discovery, fit scoring, board form fillers, live-mode safeguards, hand-off and assist
 modes, the dashboard, the form agent, the source library, the careers agent, the apply
-kit, the qualification map, the orchestrator agent, and the morning run are all built.
-What comes next is in [ROADMAP.md](ROADMAP.md).
+kit, the qualification map, the orchestrator agent, and the morning run.
