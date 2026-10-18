@@ -133,9 +133,27 @@ is retried on a fallback model, so one refusal does not stop a run.
   skip.
 - **Cost and speed tracking.** Each orchestrator run logs every step with its duration and
   its input, output, and prompt-cache token counts, so cost per kit can be measured.
-- **Offline evaluation.** 534 pytest tests run with the Anthropic SDK and every HTTP call
-  mocked. The form tests drive a real headless Chromium against local HTML forms,
-  including multi-page forms and iframes.
+- **Offline evaluation.** 534 pytest tests run in CI on every push, with no network: the
+  Anthropic SDK is replaced by a fake client that returns scripted replies, and every HTTP
+  call is answered from saved pages. The form tests drive a real headless Chromium against
+  local HTML forms, including multi-page forms and iframes. Each agent has its own tests:
+  - **Fit scorer** (`test_scorer.py`): a score under 70 or an unresolved dealbreaker can
+    never mean apply, and an out-of-range score or a reply that is not JSON is rejected.
+  - **Careers agent** (`test_careers_agent.py`): a title is accepted only from a page the
+    agent opened, a list of openings is never taken as the role, and robots.txt is obeyed.
+  - **Form agent** (`test_form_agent.py`, `test_fill_with_agent.py`): custom widgets are
+    filled, nothing is ever submitted, and login pages are reported instead of waited on.
+  - **Resume sub-agent** (`test_resume_builder.py`, `test_entry_caps.py`,
+    `test_qualification_map.py`): only the four jobs and three projects the model ranked
+    most relevant are kept, the current job is always kept, and a requirement counts only
+    when it is copied word for word from the posting.
+  - **Answers sub-agent** (`test_answers.py`, `test_apply_kit.py`): an answer is accepted
+    only when its quote is found in the sources, a made-up quote goes to manual review,
+    and a paraphrase is rejected.
+  - **Library agent** (`test_library.py`): a draft is kept only when every quote checks
+    out, and the agent gets one chance to fix a quote that does not.
+  - **Orchestrator** (`test_orchestrator.py`): it has no submit tool, builds kits only
+    for jobs code listed as candidates, and stops when the goal is met or a budget runs out.
 
 ### The creative bits (what sets Cassandra apart)
 
