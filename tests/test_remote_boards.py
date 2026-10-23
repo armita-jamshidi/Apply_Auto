@@ -194,12 +194,16 @@ def test_cap_keeps_the_best_three_jobs_per_company() -> None:
 @pytest.mark.parametrize(
     ("title", "description", "allowed"),
     [
-        ("Machine Learning Engineer II", "Requires 2+ years of experience with Python.", True),
+        (
+            "Machine Learning Engineer II",
+            "Requires 2+ years of experience with Python. Help patients.",
+            True,
+        ),
         ("Machine Learning Engineer II", "Requires 3+ years of experience with Python.", False),
         ("Machine Learning Engineer II", "Build models.", False),
         ("AI Engineer", "Requires 4 years of experience.", False),
-        ("AI Engineer", "Requires 1+ years of experience.", True),
-        ("AI Engineer", "Build agents.", True),
+        ("AI Engineer", "Requires 1+ years of experience. Help patients.", True),
+        ("AI Engineer", "Build agents for patients.", True),
     ],
 )
 def test_roles_needing_more_than_two_years_are_excluded(

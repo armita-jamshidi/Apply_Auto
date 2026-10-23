@@ -5,6 +5,10 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **Only healthcare and health-tech roles.** Discovery, cleanup, and kit preparation keep
+  only roles whose title or description names healthcare or health tech, on top of the
+  0 to 2 years filter. Checked in code before any model call (Oct 23, 2026).
+  Spec: [specs/012-healthcare-roles.md](specs/012-healthcare-roles.md).
 - **At most four jobs and three projects per resume.** The tailored resume keeps only the
   most relevant four jobs and three projects (GitHub repositories included), each with at
   least two bullets, fills the page, and always includes the current job with its pinned

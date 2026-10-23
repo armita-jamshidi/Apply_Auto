@@ -67,7 +67,8 @@ Runner = Callable[[list[str]], int]
 def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     """Remove found jobs the current settings rule out; return how many.
 
-    That is internships, co-ops, roles needing more years than max_years_experience,
+    That is internships, co-ops, roles outside healthcare (industry_keywords), roles
+    needing more years than max_years_experience,
     postings older than max_posting_age_days, titles outside the wanted roles
     (title_keywords and title_role_keywords), and locations outside North Carolina or US
     remote. Each job's years of experience are read again from its current description,

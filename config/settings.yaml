@@ -52,6 +52,55 @@ discovery:
     - coop
     - co op
   exclude_description_phrases: []
+  # Keep only healthcare and health-tech roles: the title or description must name one of
+  # these (word for word, any case). Benefits sentences ("medical, dental, and vision
+  # insurance") do not count. Remove the list to keep roles in every industry.
+  industry_keywords:
+    - healthcare
+    - health care
+    - health tech
+    - health-tech
+    - healthtech
+    - digital health
+    - health system
+    - health systems
+    - health plan
+    - health plans
+    - clinical
+    - clinician
+    - clinicians
+    - patient
+    - patients
+    - hospital
+    - hospitals
+    - medical
+    - medicine
+    - physician
+    - physicians
+    - nurse
+    - nurses
+    - nursing
+    - ehr
+    - emr
+    - electronic health record
+    - electronic health records
+    - hipaa
+    - fhir
+    - telehealth
+    - telemedicine
+    - biotech
+    - biotechnology
+    - pharma
+    - pharmaceutical
+    - life sciences
+    - drug discovery
+    - diagnostics
+    - radiology
+    - genomics
+    - care delivery
+    - revenue cycle
+    - medicare
+    - medicaid
   # Keep only AI and agent engineering roles: a title must contain one of title_keywords
   # (the AI side) and one of title_role_keywords (the engineering side), for example
   # "AI Engineer", "Agent Engineer", "Machine Learning Engineer", or "Forward Deployed

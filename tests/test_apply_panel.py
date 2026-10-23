@@ -71,7 +71,7 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             url="https://jobs.smartrecruiters.com/acme/1",
             location_raw="Remote - US",
             location_category="remote_us",
-            description="Build ML.",
+            description="Build ML for hospitals.",
             status="manual_review",
         )
         session.add(job)

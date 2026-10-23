@@ -1,7 +1,7 @@
 # Job Agent: instructions for Claude
 
 Job Agent is a privacy-conscious job search assistant for one candidate. It finds AI and
-agent engineering roles (US-remote or in the Research Triangle area of North Carolina),
+agent engineering roles in healthcare and health tech (US-remote or in the Research Triangle area of North Carolina),
 scores each against the candidate's profile, tailors a one-page Word resume to each
 posting's exact wording, and answers every application question in the candidate's voice.
 The local dashboard lists each job with its fit score and a link to the role on the
@@ -9,7 +9,8 @@ company's site, and shows every answer in its Apply sidebar.
 
 Only roles open to a recent graduate (December 2025) or someone with 1 to 2 years of
 experience are kept: a role that requires 3 or more years is filtered out before it reaches
-the dashboard (`max_years_experience: 2`). Internships and co-ops are filtered out too.
+the dashboard (`max_years_experience: 2`). Internships and co-ops are filtered out too, and so are roles outside healthcare and
+health tech (`industry_keywords`).
 
 The buyer and only user is the candidate. The promise is convenience: less time tailoring
 resumes, answering questions, and searching.
