@@ -32,6 +32,12 @@ DEFAULT_EXCLUDED_TITLES = (
     "intern", "interns", "internship", "internships", "co-op", "co-ops", "coop", "co op",
 )
 DEFAULT_EXCLUDED_DESCRIPTION_PHRASES: tuple[str, ...] = ()
+# Sentences that mention these are benefits, not the company's field: "medical, dental, and
+# vision insurance" does not make a role a healthcare role.
+BENEFIT_WORDS = (
+    "dental", "vision", "insurance", "benefits", "benefit", "401(k)", "401k", "wellness",
+    "pto", "paid time off", "parental leave", "perks",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +68,7 @@ class AgentSettings:
     fresh_posting_days: int = 7
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
+    industry_keywords: tuple[str, ...] = ()
     daily_ready_by: str = "09:00"
     daily_timezone: str = "America/New_York"
     daily_start_hours_before: float = 2.0
@@ -155,6 +162,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         exclude_description_phrases=_keywords(
             discovery.get("exclude_description_phrases"), DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
         ),
+        industry_keywords=_keywords(discovery.get("industry_keywords"), ()),
         daily_ready_by=daily_ready_by,
         daily_timezone=str(daily.get("timezone") or "America/New_York"),
         daily_start_hours_before=float(daily.get("start_hours_before", 2)),
@@ -187,7 +195,8 @@ def stale_posting_reason(posted_at: datetime | None, settings: AgentSettings) ->
 
 
 def excluded_role_reason(title: str, description: str, settings: AgentSettings) -> str | None:
-    """Why a role is ruled out (intern, co-op, or more years than max_years_experience)."""
+    """Why a role is ruled out (intern, co-op, outside the wanted industry, or more years
+    than max_years_experience)."""
     if settings.exclude_title_keywords and title_matches(
         title, settings.exclude_title_keywords
     ):
@@ -204,7 +213,29 @@ def excluded_role_reason(title: str, description: str, settings: AgentSettings) 
             return f"Requires {experience.min_years}+ years of experience (max {limit})"
         if experience.level == "mid" and experience.min_years is None:
             return f"Mid-level role that does not state it needs {limit} years or fewer"
+    # A blank description is not known yet; the full posting is checked on a later run.
+    if text and not in_wanted_industry(title, description, settings):
+        return "Not a healthcare or health-tech role"
     return None
+
+
+def in_wanted_industry(title: str, description: str, settings: AgentSettings) -> bool:
+    """Whether the title or description names the wanted industry (industry_keywords).
+
+    Benefits sentences are skipped, so "medical and dental insurance" does not count. With
+    no industry_keywords every role counts.
+    """
+    if not settings.industry_keywords:
+        return True
+    if title_matches(title, settings.industry_keywords):
+        return True
+    text = re.sub(r"<[^>]+>", "\n", description)
+    sentences = re.split(r"[.!?;\n\u2022]+", text)
+    return any(
+        title_matches(sentence, settings.industry_keywords)
+        and not title_matches(sentence, BENEFIT_WORDS)
+        for sentence in sentences
+    )
 
 
 def title_matches(title: str, keywords: tuple[str, ...]) -> bool:

@@ -32,7 +32,7 @@ def add_job(db: Session, url: str, **fields) -> Job:
         "url": url,
         "location_raw": "Remote - US",
         "location_category": "remote_us",
-        "description": "Build agents in Python.",
+        "description": "Build agents in Python for clinicians.",
         "status": "new",
         "fit_score": 80,
         **fields,

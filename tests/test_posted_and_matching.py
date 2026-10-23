@@ -108,13 +108,13 @@ def test_cleanup_removes_stale_jobs_and_dashboard_shows_posted(session: Session,
     old = Job(
         source="lever", platform="lever", company="Old Co", title="AI Engineer",
         url="https://jobs.lever.co/old/1", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new",
+        location_category="remote_us", description="Clinical AI.", status="new",
         posted_at=now - timedelta(days=90),
     )
     fresh = Job(
         source="lever", platform="lever", company="Fresh Co", title="AI Engineer",
         url="https://jobs.lever.co/fresh/1", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new",
+        location_category="remote_us", description="Clinical AI.", status="new",
         posted_at=now - timedelta(days=3),
     )
     session.add_all([old, fresh])
@@ -166,7 +166,7 @@ def test_rediscovery_repairs_a_stored_company_page_link(session: Session, tmp_pa
     old = Job(
         source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
         url="https://acme.com/careers?gh_jid=7", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new", fit_score=88,
+        location_category="remote_us", description="Clinical AI.", status="new", fit_score=88,
     )
     session.add(old)
     session.flush()
@@ -193,13 +193,13 @@ def test_dashboard_skips_a_stored_company_page_that_only_lists_openings(session:
         source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
         url="https://job-boards.greenhouse.io/acme/jobs/7",
         apply_url="https://acme.com/jobs/search?gh_jid=7", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new",
+        location_category="remote_us", description="Clinical AI.", status="new",
     )
     named = Job(
         source="greenhouse", platform="greenhouse", company="Acme", title="ML Engineer",
         url="https://job-boards.greenhouse.io/acme/jobs/8",
         apply_url="https://acme.com/careers/8?gh_jid=8", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new",
+        location_category="remote_us", description="Clinical AI.", status="new",
     )
 
     assert dashboard.application_link(listed) == "https://job-boards.greenhouse.io/acme/jobs/7"
@@ -218,7 +218,7 @@ def test_a_general_careers_page_is_labelled_and_not_sent_to_the_form_agent(
     job = Job(
         source="hackernews", platform="hackernews", company="Spade", title="AI Engineer",
         url="https://news.ycombinator.com/item?id=1", apply_url="https://spade.com/careers/",
-        location_raw="Remote - US", location_category="remote_us", description="d",
+        location_raw="Remote - US", location_category="remote_us", description="Clinical AI.",
         status="new",
     )
     session.add(job)
@@ -232,7 +232,7 @@ def test_jobs_off_their_platform_host_are_not_prepared(session: Session) -> None
     job = Job(
         source="greenhouse", platform="greenhouse", company="Acme", title="AI Engineer",
         url="https://acme.com/careers?gh_jid=9", location_raw="Remote - US",
-        location_category="remote_us", description="d", status="new", fit_score=95,
+        location_category="remote_us", description="Clinical AI.", status="new", fit_score=95,
     )
     session.add(job)
     session.flush()
@@ -256,7 +256,7 @@ def test_cap_treats_company_suffixes_as_the_same_company(session: Session) -> No
             Job(
                 source="lever", platform="lever", company=company, title=f"AI Engineer {index}",
                 url=f"https://jobs.lever.co/ds/{index}", location_raw="Remote - US",
-                location_category="remote_us", description="d", status="new",
+                location_category="remote_us", description="Clinical AI.", status="new",
                 fit_score=90 - index,
             )
         )

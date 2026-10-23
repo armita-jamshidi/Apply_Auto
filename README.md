@@ -19,7 +19,7 @@ which jobs fit you, and you can believe her, because every claim she makes is ba
 quote that code has checked.
 
 Cassandra is a multi-agent job search assistant built on the Anthropic Claude API. She
-finds AI and agent engineering roles (US-remote or in North Carolina's Research Triangle),
+finds AI and agent engineering roles in healthcare and health tech (US-remote or in North Carolina's Research Triangle),
 scores each one against a private candidate profile, rewrites a one-page Word resume
 around each posting's exact keywords, and drafts an answer to every application question
 in the candidate's own voice. Then she stops and hands the application over, because the
@@ -45,7 +45,7 @@ savings are the candidate's own measurements.
 
 ```mermaid
 flowchart LR
-    C[8 job sources] --> F[Rule filters: role, level, years, location, age, duplicates]
+    C[8 job sources] --> F[Rule filters: role, healthcare, level, years, location, age, duplicates]
     F --> D[(Jobs database)]
     D --> K[Careers agent: finds the role on the company site]
     K --> S[Fit scorer: 0-100 with dealbreakers]

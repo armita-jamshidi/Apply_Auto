@@ -36,7 +36,7 @@ def add_job(db: Session, url: str, **fields) -> Job:
         "url": url,
         "location_raw": "Remote - US",
         "location_category": "remote_us",
-        "description": "Build Python services.",
+        "description": "Build Python services for patients.",
         "status": "new",
         **fields,
     }
@@ -331,7 +331,7 @@ def test_cleanup_rechecks_years_after_the_description_changes(session: Session) 
         session,
         "https://jobs.lever.co/a/ai",
         status="manual_review",
-        description="1-2 years of experience with Python.",
+        description="1-2 years of experience with Python. Help patients.",
     )
     new_grad = add_job(session, "https://jobs.lever.co/a/ng", title="AI Engineer, New Grad")
 
