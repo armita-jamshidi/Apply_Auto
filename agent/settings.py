@@ -69,6 +69,7 @@ class AgentSettings:
     exclude_title_keywords: tuple[str, ...] = DEFAULT_EXCLUDED_TITLES
     exclude_description_phrases: tuple[str, ...] = DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
     industry_keywords: tuple[str, ...] = ()
+    us_companies_only: bool = False
     daily_ready_by: str = "09:00"
     daily_timezone: str = "America/New_York"
     daily_start_hours_before: float = 2.0
@@ -163,6 +164,7 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
             discovery.get("exclude_description_phrases"), DEFAULT_EXCLUDED_DESCRIPTION_PHRASES
         ),
         industry_keywords=_keywords(discovery.get("industry_keywords"), ()),
+        us_companies_only=bool(discovery.get("us_companies_only", False)),
         daily_ready_by=daily_ready_by,
         daily_timezone=str(daily.get("timezone") or "America/New_York"),
         daily_start_hours_before=float(daily.get("start_hours_before", 2)),

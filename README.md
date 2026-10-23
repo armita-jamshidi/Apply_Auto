@@ -45,7 +45,7 @@ savings are the candidate's own measurements.
 
 ```mermaid
 flowchart LR
-    C[8 job sources] --> F[Rule filters: role, healthcare, level, years, location, age, duplicates]
+    C[8 job sources] --> F[Rule filters: role, healthcare, US company, level, years, location, age, duplicates]
     F --> D[(Jobs database)]
     D --> K[Careers agent: finds the role on the company site]
     K --> S[Fit scorer: 0-100 with dealbreakers]

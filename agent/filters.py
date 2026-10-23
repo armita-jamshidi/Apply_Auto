@@ -292,3 +292,61 @@ def company_key(company: str) -> str:
 
 def _words(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
+# Countries and main cities outside the US, for "headquartered in Berlin" or "a London-based
+# startup". A company based in one of these is kept only when the posting names a US office.
+_FOREIGN_PLACES = (
+    "United Kingdom|UK|U\\.K\\.|England|Scotland|Wales|London|Manchester|Cambridge, UK|"
+    "Edinburgh|Ireland|Dublin|Germany|Berlin|Munich|Hamburg|France|Paris|Netherlands|"
+    "Amsterdam|Belgium|Brussels|Spain|Madrid|Barcelona|Portugal|Lisbon|Italy|Milan|Rome|"
+    "Switzerland|Zurich|Zürich|Geneva|Austria|Vienna|Sweden|Stockholm|Norway|Oslo|Denmark|"
+    "Copenhagen|Finland|Helsinki|Estonia|Tallinn|Poland|Warsaw|Krakow|Czech Republic|Prague|"
+    "Romania|Bucharest|Ukraine|Kyiv|Greece|Athens|Turkey|Istanbul|Israel|Tel Aviv|Jerusalem|"
+    "United Arab Emirates|UAE|Dubai|Abu Dhabi|India|Bangalore|Bengaluru|Mumbai|Delhi|"
+    "Hyderabad|Pune|Chennai|Pakistan|Singapore|Japan|Tokyo|South Korea|Korea|Seoul|China|"
+    "Beijing|Shanghai|Shenzhen|Hong Kong|Taiwan|Taipei|Vietnam|Philippines|Manila|Indonesia|"
+    "Jakarta|Australia|Sydney|Melbourne|New Zealand|Auckland|Canada|Toronto|Vancouver|"
+    "Montreal|Montréal|Ottawa|Calgary|Waterloo|Mexico|Mexico City|Brazil|São Paulo|Sao Paulo|"
+    "Argentina|Buenos Aires|Colombia|Bogotá|Chile|Santiago|Nigeria|Lagos|Kenya|Nairobi|"
+    "South Africa|Cape Town|Egypt|Cairo|Europe|the EU"
+)
+_FOREIGN_HQ = re.compile(
+    rf"(?i:\b(?:headquartered|headquarters|based|hq|head office))\s*(?i:is\s+|are\s+)?"
+    rf"(?i:in|out of|:)\s+(?i:the\s+)?(?:{_FOREIGN_PLACES})(?!\w)"
+    rf"|(?<!\w)(?:{_FOREIGN_PLACES})[- ](?i:based|headquartered)\b",
+)
+_US_PLACE = (
+    rf"(?:US|U\.S\.A?\.?|USA|United States|{_US_STATES}|New York City|NYC|San Francisco|"
+    r"SF|Bay Area|Silicon Valley|Los Angeles|Boston|Seattle|Austin|Chicago|Denver|Atlanta|"
+    r"Miami|Philadelphia|Pittsburgh|Nashville|Salt Lake City|Washington,? D\.?C\.?|"
+    r"Palo Alto|Mountain View|Menlo Park|Cambridge, MA|Raleigh|Durham|Chapel Hill|Cary|"
+    r"Morrisville|Charlotte|Research Triangle)(?!\w)"
+)
+_OFFICE_WORDS = r"(?i:offices?|hubs?|entity|subsidiary|headquarters|hq|locations?)"
+# "offices in London and New York", "a hub in Boston", or "our US office", "a U.S. entity".
+_US_OFFICE = re.compile(
+    rf"\b{_OFFICE_WORDS}\s+(?:\w+\s+){{0,3}}?(?i:in|across)\s+(?i:the\s+)?"
+    rf"(?:[A-Z][\w.'-]*(?:\s[A-Z][\w.'-]*)*(?:,\s*|\s+(?:and|&)\s+))*{_US_PLACE}"
+    rf"|(?<!\w){_US_PLACE}(?:[- ]based)?\s+{_OFFICE_WORDS}\b"
+)
+
+
+def non_us_company_reason(description: str, location_category: str) -> str | None:
+    """Why a job is at a company based outside the US with no US office, or None.
+
+    A role in North Carolina is at a US office already. Otherwise a posting that says the
+    company is based abroad ("headquartered in London", "a Berlin-based startup") is ruled
+    out unless a sentence names a US office ("offices in London and New York"). A posting
+    that says nothing about where the company is based is kept.
+    """
+    if location_category == "nc":
+        return None
+    text = re.sub(r"<[^>]+>", "\n", description)
+    # "U.S." and "D.C." do not end a sentence.
+    sentences = re.split(r"(?<=[a-z0-9)][.!?;])\s+|\n+", text)
+    if not any(_FOREIGN_HQ.search(" ".join(s.split())) for s in sentences):
+        return None
+    if any(_US_OFFICE.search(" ".join(s.split())) for s in sentences):
+        return None
+    return "Company is based outside the US with no US office"
