@@ -52,6 +52,10 @@ discovery:
     - coop
     - co op
   exclude_description_phrases: []
+  # Keep only companies based in the US, or based abroad with a US office. A posting that
+  # says the company is based abroad ("headquartered in London", "a Berlin-based startup")
+  # is dropped unless it names a US office. Roles in North Carolina are at a US office.
+  us_companies_only: true
   # Keep only healthcare and health-tech roles: the title or description must name one of
   # these (word for word, any case). Benefits sentences ("medical, dental, and vision
   # insurance") do not count. Remove the list to keep roles in every industry.
@@ -101,11 +105,16 @@ discovery:
     - revenue cycle
     - medicare
     - medicaid
-  # Keep only AI and agent engineering roles: a title must contain one of title_keywords
-  # (the AI side) and one of title_role_keywords (the engineering side), for example
-  # "AI Engineer", "Agent Engineer", "Machine Learning Engineer", or "Forward Deployed
-  # Engineer, Agentic Platform". Remove a list to drop that requirement.
+  # Keep only AI, prompt, and agentic engineering roles: a title must contain one of
+  # title_keywords (the AI side) and one of title_role_keywords (the engineering side), for
+  # example "AI Engineer", "Prompt Engineer", "Agent Engineer", "Machine Learning Engineer",
+  # or "Forward Deployed Engineer, Agentic Platform". Scientist and researcher titles are
+  # left out. Remove a list to drop that requirement.
   title_keywords:
+    - prompt
+    - prompting
+    - context engineer
+    - context engineering
     - ai
     - a.i.
     - artificial intelligence
@@ -131,8 +140,6 @@ discovery:
     - engineering
     - developer
     - swe
-    - scientist
-    - researcher
     - research engineer
     - architect
 # The morning run (job-daily): find, score, and prepare new jobs so each good match has a

@@ -10,7 +10,8 @@ company's site, and shows every answer in its Apply sidebar.
 Only roles open to a recent graduate (December 2025) or someone with 1 to 2 years of
 experience are kept: a role that requires 3 or more years is filtered out before it reaches
 the dashboard (`max_years_experience: 2`). Internships and co-ops are filtered out too, and so are roles outside healthcare and
-health tech (`industry_keywords`).
+health tech (`industry_keywords`) and companies based abroad with no US office
+(`us_companies_only`).
 
 The buyer and only user is the candidate. The promise is convenience: less time tailoring
 resumes, answering questions, and searching.

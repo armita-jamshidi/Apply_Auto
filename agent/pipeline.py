@@ -23,7 +23,7 @@ from agent.applier.review import FitSummary
 from agent.careers_agent import check_company_pages
 from agent.dashboard import DEFAULT_PORT, refresh_dashboard
 from agent.dashboard import serve as serve_dashboard
-from agent.filters import is_ambiguous_location, normalize_location
+from agent.filters import is_ambiguous_location, non_us_company_reason, normalize_location
 from agent.main import main as discover
 from agent.postings import close_finished_postings
 from agent.scorer import FitAssessment, score_job
@@ -67,8 +67,9 @@ Runner = Callable[[list[str]], int]
 def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     """Remove found jobs the current settings rule out; return how many.
 
-    That is internships, co-ops, roles outside healthcare (industry_keywords), roles
-    needing more years than max_years_experience,
+    That is internships, co-ops, roles outside healthcare (industry_keywords), companies
+    based abroad with no US office (us_companies_only), roles needing more years than
+    max_years_experience,
     postings older than max_posting_age_days, titles outside the wanted roles
     (title_keywords and title_role_keywords), and locations outside North Carolina or US
     remote. Each job's years of experience are read again from its current description,
@@ -83,6 +84,8 @@ def remove_out_of_scope_jobs(session: Session, settings: AgentSettings) -> int:
     for job in jobs:
         job.min_years_experience = classify_experience(job.title, job.description).min_years
         reason = excluded_role_reason(job.title, job.description, settings)
+        if reason is None and settings.us_companies_only:
+            reason = non_us_company_reason(job.description, job.location_category)
         if reason is None and job.status == READY_FOR_YOU:
             continue
         if reason is None:

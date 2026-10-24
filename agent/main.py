@@ -14,7 +14,12 @@ from agent.fetchers.ashby import fetch_ashby_jobs
 from agent.fetchers.greenhouse import fetch_greenhouse_jobs
 from agent.fetchers.lever import fetch_lever_jobs
 from agent.fetchers.smartrecruiters import fetch_smartrecruiters_jobs
-from agent.filters import is_ambiguous_location, normalize_location, persist_job_if_new
+from agent.filters import (
+    is_ambiguous_location,
+    non_us_company_reason,
+    normalize_location,
+    persist_job_if_new,
+)
 from agent.seniority import classify_experience
 from agent.settings import (
     AgentSettings,
@@ -101,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
                     if not title_in_scope(listing.title, settings):
                         continue
                     if excluded_role_reason(listing.title, listing.description, settings):
+                        continue
+                    if settings.us_companies_only and non_us_company_reason(
+                        listing.description, category
+                    ):
                         continue
                     if stale_posting_reason(listing.posted_at, settings):
                         continue

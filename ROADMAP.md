@@ -5,6 +5,10 @@ Move an item to Done when its PR is merged.
 
 ## Now
 
+- **US companies only, and AI, prompt, and agentic engineering titles.** A posting from a
+  company based abroad is removed unless it names a US office. Titles now include prompt
+  and context engineering and leave out scientist and researcher roles (Oct 23, 2026).
+  Spec: [specs/013-us-companies-and-ai-titles.md](specs/013-us-companies-and-ai-titles.md).
 - **Only healthcare and health-tech roles.** Discovery, cleanup, and kit preparation keep
   only roles whose title or description names healthcare or health tech, on top of the
   0 to 2 years filter. Checked in code before any model call (Oct 23, 2026).
